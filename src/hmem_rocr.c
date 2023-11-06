@@ -122,6 +122,10 @@ struct hsa_ops {
 	hsa_status_t (*hsa_iterate_agents)(
 		hsa_status_t (*callback)(hsa_agent_t agent, void *data),
 		void *data);
+	hsa_status_t (*hsa_system_get_info)(hsa_system_info_t attribute, 
+					    void* value);
+	hsa_status_t (*hsa_amd_portable_export_dmabuf)(const void* ptr, size_t size, 
+						       int* dmabuf, uint64_t* offset);
 };
 
 #if ENABLE_ROCR_DLOPEN
@@ -172,6 +176,8 @@ static struct hsa_ops hsa_ops = {
 	.hsa_signal_create = hsa_signal_create,
 	.hsa_signal_destroy = hsa_signal_destroy,
 	.hsa_iterate_agents = hsa_iterate_agents,
+	.hsa_amd_portable_export_dmabuf = hsa_amd_portable_export_dmabuf,
+	.hsa_system_get_info = hsa_system_get_info,
 };
 
 #endif /* ENABLE_ROCR_DLOPEN */
@@ -1054,6 +1060,48 @@ int rocr_dev_reg_copy_from_hmem(uint64_t handle, void *dest, const void *src,
 	return FI_SUCCESS;
 }
 
+bool rocr_is_dmabuf_supported(void)
+{
+	hsa_status_t hsa_ret;
+	bool dmabuf_support = false, dmabuf_export = false;
+	res = hsa_ops.hsa_system_get_info((hsa_system_info_t) 0x204, &dmabuf_support);
+
+	if (res != HSA_STATUS_SUCCESS)
+	{
+		FI_WARN(&core_prov, FI_LOG_CORE,
+			"Failed to retrieve system info (dmabuf): %s\n",
+			ofi_hsa_status_to_string(hsa_ret));
+		return -FI_EIO;
+	}
+
+#if HAVE_HSA_AMD_PORTABLE_EXPORT_DMABUF
+	dmabuf_export = true;
+#endif
+
+	return dmabuf_support && dmabuf_export;
+}
+
+int rocr_hmem_get_dmabuf_fd(void *addr, uint64_t size, int *dmabuf_fd, 
+			    uint64_t *offset)
+{
+	if (!rocr_is_dmabuf_supported())
+		return -FI_EOPNOTSUPP;
+
+	hsa_status_t hsa_ret;
+
+	hsa_ret = hsa_ops.hsa_amd_portable_export_dmabuf(addr, size, dmabuf_fd, offset);
+
+	if (hsa_ret != HSA_STATUS_SUCCESS)
+	{
+		FI_WARN(&core_prov, FI_LOG_CORE,
+			"Failed to export dmabuf handle: %s\n",
+			ofi_hsa_status_to_string(hsa_ret));
+		return -FI_EIO;
+	}
+
+	return FI_SUCCESS;
+}
+
 #else
 
 int rocr_copy_from_dev(uint64_t device, void *dest, const void *src,
@@ -1170,6 +1218,16 @@ int rocr_dev_reg_copy_to_hmem(uint64_t handle, void *dest, const void *src,
 
 int rocr_dev_reg_copy_from_hmem(uint64_t handle, void *dest, const void *src,
 				size_t size)
+{
+	return -FI_ENOSYS;
+}
+
+bool rocr_is_dmabuf_supported(void)
+{
+	return false;
+}
+
+int rocr_hmem_get_dmabuf_fd(void *addr, uint64_t size, int *fd, uint64_t *offset)
 {
 	return -FI_ENOSYS;
 }
