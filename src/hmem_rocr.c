@@ -29,7 +29,7 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-
+#include <stdio.h>
 #if HAVE_CONFIG_H
 #include <config.h>
 #endif
@@ -1066,9 +1066,9 @@ bool rocr_is_dmabuf_supported(void)
 {
 	hsa_status_t hsa_ret;
 	bool dmabuf_support = false, dmabuf_kernel = false;
-	res = hsa_ops.hsa_system_get_info((hsa_system_info_t) 0x204, &dmabuf_support);
+	hsa_ret = hsa_ops.hsa_system_get_info((hsa_system_info_t) 0x204, &dmabuf_support);
 
-	if (res != HSA_STATUS_SUCCESS)
+	if (hsa_ret != HSA_STATUS_SUCCESS)
 	{
 		FI_WARN(&core_prov, FI_LOG_CORE,
 			"Failed to retrieve system info (dmabuf): %s\n",

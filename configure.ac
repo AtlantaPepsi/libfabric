@@ -971,19 +971,19 @@ AC_DEFINE_UNQUOTED([HAVE_ROCR], [$have_rocr], [ROCR support])
 AS_IF([test "$rocr_dlopen" != "1"], [LIBS="$LIBS $rocr_LIBS"])
 AS_IF([test "$have_rocr" = "1" && test x"$with_rocr" != x"yes"],
       [CPPFLAGS="$CPPFLAGS $rocr_CPPFLAGS"
-       LDFLAGS="$LDFLAGS $rocr_LDFLAGS"],
-      [
-        have_hsa_amd_portable_export_dmabuf=1
-        AC_CHECK_DECL([hsa_amd_portable_export_dmabuf],
-                        [],
-                        [have_hsa_amd_portable_export_dmabuf=0],
-                        [[#include <hsa_ext_amd.h>]])
+       LDFLAGS="$LDFLAGS $rocr_LDFLAGS"
+       have_hsa_amd_portable_export_dmabuf=1
+       AC_CHECK_DECL([hsa_amd_portable_export_dmabuf],
+                     [],
+                     [have_hsa_amd_portable_export_dmabuf=0],
+                     [[#include <hsa/hsa_ext_amd.h>]])
 
-        AC_CHECK_DECL([HSA_AMD_SYSTEM_INFO_DMABUF_SUPPORTED],
-                        [],
-                        [have_hsa_amd_portable_export_dmabuf=0],
-                        [[#include <hsa.h>]])
-      ],[])
+       AC_CHECK_DECL([HSA_AMD_SYSTEM_INFO_DMABUF_SUPPORTED],
+                     [],
+                     [have_hsa_amd_portable_export_dmabuf=0],
+                     [[#include <hsa/hsa.h>]])
+      ],
+      [])
 AC_DEFINE_UNQUOTED([HAVE_HSA_AMD_PORTABLE_EXPORT_DMABUF],[$have_hsa_amd_portable_export_dmabuf],[dmabuf handle support])
 
 AC_CHECK_SIZEOF([void *])

@@ -164,7 +164,7 @@ int rocr_dev_reg_copy_from_hmem(uint64_t handle, void *dest, const void *src,
 				size_t size);
 bool rocr_is_dmabuf_supported(void);
 int rocr_hmem_get_dmabuf_fd(void *addr, uint64_t size, int *dmabuf_fd, 
-			    uint64_t *offset)
+			    uint64_t *offset);
 
 int cuda_copy_to_dev(uint64_t device, void *dev, const void *host, size_t size);
 int cuda_copy_from_dev(uint64_t device, void *host, const void *dev, size_t size);
