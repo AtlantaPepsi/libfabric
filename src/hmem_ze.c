@@ -152,10 +152,12 @@ static inline int ze_get_device_idx(uint64_t device)
 	return device & DEVICE_MASK;
 }
 
+#ifndef NDEBUG
 static inline int ze_get_driver_idx(uint64_t device)
 {
 	return device >> 16;
 }
+#endif
 
 #if ENABLE_ZE_DLOPEN
 
@@ -1130,7 +1132,8 @@ int ze_hmem_host_unregister(void *ptr)
 	return FI_SUCCESS;
 }
 
-int ze_hmem_get_dmabuf_fd(void *addr, uint64_t size, int *fd, uint64_t *offset)
+int ze_hmem_get_dmabuf_fd(const void *addr, uint64_t size, int *fd,
+			  uint64_t *offset)
 {
 	int ret;
 	ze_result_t ze_ret;
@@ -1431,7 +1434,8 @@ int ze_dev_reg_copy_from_hmem(uint64_t handle, void *dest, const void *src,
 	return -FI_ENOSYS;
 }
 
-int ze_hmem_get_dmabuf_fd(void *addr, uint64_t size, int *fd, uint64_t *offset)
+int ze_hmem_get_dmabuf_fd(const void *addr, uint64_t size, int *fd,
+			  uint64_t *offset)
 {
 	return -FI_ENOSYS;
 }

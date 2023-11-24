@@ -126,7 +126,7 @@ struct ofi_hmem_ops {
 				    const void *src, size_t size);
 	int (*dev_reg_copy_from_hmem)(uint64_t handle, void *dest,
 				      const void *src, size_t size);
-	int (*get_dmabuf_fd)(void *addr, uint64_t size, int *fd,
+	int (*get_dmabuf_fd)(const void *addr, uint64_t size, int *fd,
 			     uint64_t *offset);
 };
 
@@ -184,18 +184,12 @@ int cuda_open_handle(void **handle, size_t size, uint64_t device,
 		     void **ipc_ptr);
 int cuda_close_handle(void *ipc_ptr);
 int cuda_get_base_addr(const void *ptr, size_t len, void **base, size_t *size);
-int cuda_dev_register(const void *addr, size_t size, uint64_t *handle);
-int cuda_dev_unregister(uint64_t handle);
-int cuda_dev_reg_copy_to_hmem(uint64_t handle, void *dest, const void *src,
-			      size_t size);
-int cuda_dev_reg_copy_from_hmem(uint64_t handle, void *dest, const void *src,
-				size_t size);
 
 bool cuda_is_ipc_enabled(void);
 int cuda_get_ipc_handle_size(size_t *size);
 bool cuda_is_gdrcopy_enabled(void);
 bool cuda_is_dmabuf_supported(void);
-int cuda_get_dmabuf_fd(void *addr, uint64_t size, int *fd,
+int cuda_get_dmabuf_fd(const void *addr, uint64_t size, int *fd,
 		       uint64_t *offset);
 
 void cuda_gdrcopy_to_dev(uint64_t handle, void *dev,
@@ -241,7 +235,8 @@ int ze_dev_reg_copy_to_hmem(uint64_t handle, void *dest, const void *src,
 			    size_t size);
 int ze_dev_reg_copy_from_hmem(uint64_t handle, void *dest, const void *src,
 			      size_t size);
-int ze_hmem_get_dmabuf_fd(void *addr, uint64_t size, int *fd, uint64_t *offset);
+int ze_hmem_get_dmabuf_fd(const void *addr, uint64_t size, int *fd,
+			  uint64_t *offset);
 
 int neuron_copy_to_dev(uint64_t device, void *dev, const void *host, size_t size);
 int neuron_copy_from_dev(uint64_t device, void *host, const void *dev, size_t size);
@@ -251,7 +246,8 @@ int neuron_hmem_init(void);
 int neuron_hmem_cleanup(void);
 void *neuron_alloc(void **handle, size_t size);
 void neuron_free(void **handle);
-int neuron_get_dmabuf_fd(void *addr, uint64_t size, int *fd, uint64_t *offset);
+int neuron_get_dmabuf_fd(const void *addr, uint64_t size, int *fd,
+			 uint64_t *offset);
 
 int synapseai_init(void);
 int synapseai_cleanup(void);
@@ -259,7 +255,7 @@ int synapseai_copy_to_hmem(uint64_t device, void *dest, const void *src,
                            size_t size);
 int synapseai_copy_from_hmem(uint64_t device, void *dest, const void *src,
                              size_t size);
-int synapseai_get_dmabuf_fd(void *addr, uint64_t size, int *fd,
+int synapseai_get_dmabuf_fd(const void *addr, uint64_t size, int *fd,
 			    uint64_t *offset);
 bool synapseai_is_addr_valid(const void *addr, uint64_t *device,
                              uint64_t *flags);
@@ -350,8 +346,8 @@ static inline bool ofi_hmem_no_is_ipc_enabled(void)
 	return false;
 }
 
-static inline int ofi_hmem_no_get_dmabuf_fd(void *addr, uint64_t size, int *fd,
-					    uint64_t *offset)
+static inline int ofi_hmem_no_get_dmabuf_fd(const void *addr, uint64_t size,
+					    int *fd, uint64_t *offset)
 {
 	return -FI_ENOSYS;
 }
@@ -436,7 +432,7 @@ int ofi_hmem_dev_reg_copy_to_hmem(enum fi_hmem_iface iface, uint64_t handle,
 				  void *dest, const void *src, size_t size);
 int ofi_hmem_dev_reg_copy_from_hmem(enum fi_hmem_iface iface, uint64_t handle,
 				    void *dest, const void *src, size_t size);
-int ofi_hmem_get_dmabuf_fd(enum fi_hmem_iface, void *addr, uint64_t size,
+int ofi_hmem_get_dmabuf_fd(enum fi_hmem_iface, const void *addr, uint64_t size,
 			   int *fd, uint64_t *offset);
 
 #endif /* _OFI_HMEM_H_ */

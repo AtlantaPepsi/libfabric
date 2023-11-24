@@ -69,7 +69,7 @@ static int efa_domain_hmem_info_init_protocol_thresholds(struct efa_domain *efa_
 	case FI_HMEM_SYSTEM:
 		/* We have not yet tested runting with system memory */
 		info->runt_size = 0;
-		info->max_intra_eager_size = efa_env.shm_max_medium_size;
+		info->max_intra_eager_size = SHM_MAX_INJECT_SIZE;
 		info->max_medium_msg_size = EFA_DEFAULT_INTER_MAX_MEDIUM_MESSAGE_SIZE;
 		info->min_read_msg_size = EFA_DEFAULT_INTER_MIN_READ_MESSAGE_SIZE;
 		info->min_read_write_size = EFA_DEFAULT_INTER_MIN_READ_WRITE_SIZE;
@@ -148,6 +148,8 @@ static int efa_domain_hmem_info_init_cuda(struct efa_domain *efa_domain)
 	int ibv_access = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ;
 	size_t len = ofi_get_page_size() * 2, tmp_value;
 	int ret;
+	int dmabuf_fd;
+	uint64_t dmabuf_offset;
 
 	if (!ofi_hmem_is_initialized(FI_HMEM_CUDA)) {
 		EFA_INFO(FI_LOG_DOMAIN, "FI_HMEM_CUDA is not initialized\n");
@@ -174,7 +176,27 @@ static int efa_domain_hmem_info_init_cuda(struct efa_domain *efa_domain)
 	else
 		info->p2p_required_by_impl = true;
 
+#if HAVE_EFA_DMABUF_MR
+	ret = cuda_get_dmabuf_fd(ptr, len, &dmabuf_fd, &dmabuf_offset);
+	if (ret == FI_SUCCESS) {
+		ibv_mr = ibv_reg_dmabuf_mr(g_device_list[0].ibv_pd, dmabuf_offset,
+					   len, (uint64_t)ptr, dmabuf_fd, ibv_access);
+		if (!ibv_mr) {
+			EFA_INFO(FI_LOG_DOMAIN,
+				"Unable to register CUDA device buffer via dmabuf: %s. "
+				"Fall back to ibv_reg_mr\n", fi_strerror(-errno));
+			ibv_mr = ibv_reg_mr(g_device_list[0].ibv_pd, ptr, len, ibv_access);
+		}
+	} else {
+		EFA_INFO(FI_LOG_DOMAIN,
+			"Unable to retrieve dmabuf fd of CUDA device buffer: %d. "
+			"Fall back to ibv_reg_mr\n", ret);
+		ibv_mr = ibv_reg_mr(g_device_list[0].ibv_pd, ptr, len, ibv_access);
+	}
+#else
 	ibv_mr = ibv_reg_mr(g_device_list[0].ibv_pd, ptr, len, ibv_access);
+#endif
+
 	if (!ibv_mr) {
 		info->p2p_supported_by_device = false;
 		efa_domain_hmem_info_init_protocol_thresholds(efa_domain, FI_HMEM_CUDA);
@@ -256,6 +278,7 @@ static int efa_domain_hmem_info_init_neuron(struct efa_domain *efa_domain)
 	/* Neuron currently requires P2P */
 	info->p2p_required_by_impl = true;
 
+#if HAVE_EFA_DMABUF_MR
 	ret = neuron_get_dmabuf_fd(ptr, (uint64_t)len, &dmabuf_fd, &offset);
 	if (ret == FI_SUCCESS) {
 		ibv_mr = ibv_reg_dmabuf_mr(
@@ -267,6 +290,9 @@ static int efa_domain_hmem_info_init_neuron(struct efa_domain *efa_domain)
 			"Fall back to ibv_reg_mr\n");
 		ibv_mr = ibv_reg_mr(g_device_list[0].ibv_pd, ptr, len, ibv_access);
 	}
+#else
+	ibv_mr = ibv_reg_mr(g_device_list[0].ibv_pd, ptr, len, ibv_access);
+#endif
 
 	if (!ibv_mr) {
 		info->p2p_supported_by_device = false;

@@ -87,7 +87,7 @@ static int ucx_dom_control(struct fid *fid, int command, void *arg)
 
 		dlist_foreach_container(&pkey->rkey_list, struct ucx_mr_rkey,
 					rkey, entry) {
-			FI_DBG(&ucx_prov,FI_LOG_DEBUG,
+			FI_DBG(&ucx_prov,FI_LOG_MR,
 			       "UCX/RMA: removed key {%" PRIu64 ":%" PRIu64 "}\n",
 			       rkey->id.owner_addr, rkey->id.key);
 			HASH_DEL(domain->remote_keys, rkey);
@@ -274,7 +274,7 @@ static int ucx_mr_regattr(struct fid *fid, const struct fi_mr_attr *attr,
 		goto out;
 	}
 
-	ret = ofi_mr_map_insert(&domain->mr_map, attr, &key, mr);
+	ret = ofi_mr_map_insert(&domain->mr_map, attr, &key, mr, flags);
 	if (ret) {
 		ucp_mem_unmap(m_domain->context, ucx_mr->memh);
 		free(ucx_mr);

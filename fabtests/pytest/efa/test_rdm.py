@@ -12,9 +12,20 @@ def test_rdm_pingpong(cmdline_args, iteration_type, completion_semantic, memory_
                                completion_semantic, memory_type, "all", completion_type=completion_type)
 
 @pytest.mark.functional
+@pytest.mark.serial
+def test_mr_exhaustion_rdm_pingpong(cmdline_args):
+    efa_run_client_server_test(cmdline_args, "fi_efa_exhaust_mr_reg_rdm_pingpong", "short",
+                                "transmit_complete", "host_to_host", "all", timeout=1000)
+
+@pytest.mark.functional
 def test_rdm_pingpong_range(cmdline_args, completion_semantic, memory_type, message_size):
     efa_run_client_server_test(cmdline_args, "fi_rdm_pingpong", "short",
                                completion_semantic, memory_type, message_size)
+
+@pytest.mark.functional
+def test_rdm_pingpong_no_inject_range(cmdline_args, completion_semantic, inject_message_size):
+    efa_run_client_server_test(cmdline_args, "fi_rdm_pingpong -j 0", "short",
+                               completion_semantic, "host_to_host", inject_message_size)
 
 @pytest.mark.parametrize("iteration_type",
                          [pytest.param("short", marks=pytest.mark.short),
@@ -39,6 +50,11 @@ def test_rdm_tagged_bw(cmdline_args, iteration_type, completion_semantic, memory
 def test_rdm_tagged_bw_range(cmdline_args, completion_semantic, memory_type, message_size):
     efa_run_client_server_test(cmdline_args, "fi_rdm_tagged_bw", "short",
                                completion_semantic, memory_type, message_size)
+
+@pytest.mark.functional
+def test_rdm_tagged_bw_no_inject_range(cmdline_args, completion_semantic, inject_message_size):
+    efa_run_client_server_test(cmdline_args, "fi_rdm_tagged_bw -j 0", "short",
+                               completion_semantic, "host_to_host", inject_message_size)
 
 @pytest.mark.parametrize("iteration_type",
                          [pytest.param("short", marks=pytest.mark.short),
@@ -68,3 +84,12 @@ def test_rdm_tagged_peek(cmdline_args):
     test = ClientServerTest(cmdline_args, "fi_rdm_tagged_peek", timeout=1800)
     test.run()
 
+# This test is run in serial mode because it takes a lot of memory
+@pytest.mark.serial
+@pytest.mark.functional
+def test_rdm_pingpong_1G(cmdline_args, completion_semantic):
+    # Default window size is 64 resulting in 128GB being registered, which
+    # exceeds max number of registered host pages
+    efa_run_client_server_test(cmdline_args, "fi_rdm_pingpong -W 1", 2,
+                               completion_semantic=completion_semantic, message_size=1073741824,
+                               memory_type="host_to_host", warmup_iteration_type=0)

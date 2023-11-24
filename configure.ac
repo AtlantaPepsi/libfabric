@@ -9,7 +9,7 @@ dnl
 dnl Process this file with autoconf to produce a configure script.
 
 AC_PREREQ([2.60])
-AC_INIT([libfabric], [1.19.0rc1], [ofiwg@lists.openfabrics.org])
+AC_INIT([libfabric], [1.21.0a1], [ofiwg@lists.openfabrics.org])
 AC_CONFIG_SRCDIR([src/fabric.c])
 AC_CONFIG_AUX_DIR(config)
 AC_CONFIG_MACRO_DIR(config)
@@ -372,7 +372,7 @@ AS_IF([test "$have_mm_atomics" -eq 1 -a "$ac_cv_type___int128" = "yes"],
           __atomic_exchange(&d, &s, &r, __ATOMIC_SEQ_CST);
           __atomic_compare_exchange(&d, &c, &s, 0, __ATOMIC_SEQ_CST,
 	  			    __ATOMIC_SEQ_CST);
-	 return 0;
+	 return !__atomic_is_lock_free(sizeof(d), NULL);
         ]])],
         [
             AC_MSG_RESULT(yes)

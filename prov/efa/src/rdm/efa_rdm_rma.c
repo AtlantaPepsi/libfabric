@@ -318,14 +318,6 @@ static inline
 bool efa_rdm_rma_should_write_using_rdma(struct efa_rdm_ep *ep, struct efa_rdm_ope *txe, struct efa_rdm_peer *peer)
 {
 	/*
-	 * RDMA_WRITE does not support FI_INJECT, because device may
-	 * need to re-send data and FI_INJECT allows user to re-use
-	 * these buffers immediately.
-	 */
-	if (txe->fi_flags & FI_INJECT)
-		return false;
-
-	/*
 	 * Because EFA is unordered and EFA iov descriptions can be more
 	 * expressive than the IBV sge's, we only implement
 	 * FI_REMOTE_CQ_DATA using RDMA_WRITE_WITH_IMM when a single iov
@@ -334,6 +326,13 @@ bool efa_rdm_rma_should_write_using_rdma(struct efa_rdm_ep *ep, struct efa_rdm_o
 	if ((txe->fi_flags & FI_REMOTE_CQ_DATA) &&
 	    (txe->iov_count > 1 || txe->rma_iov_count > 1))
 		return false;
+
+	/*
+	 * For local write, handshake is not required and
+	 * we just need to check the local ep caps
+	 */
+	if (peer->is_self)
+		return efa_rdm_ep_support_rdma_write(ep);
 
 	/* Check for hardware support of RDMA write.
 	   A handshake should have been made before the check. */
@@ -361,8 +360,10 @@ ssize_t efa_rdm_rma_post_write(struct efa_rdm_ep *ep, struct efa_rdm_ope *txe)
 
 	/*
 	 * A handshake is required to choose the correct protocol (whether to use device write/read).
+	 * For local write (writing it self), this handshake is not required because we only need to
+	 * check one-side capability
 	 */
-	if (!(peer->flags & EFA_RDM_PEER_HANDSHAKE_RECEIVED)) {
+	if (!(peer->is_self) && !(peer->flags & EFA_RDM_PEER_HANDSHAKE_RECEIVED)) {
 		err = efa_rdm_ep_trigger_handshake(ep, txe->addr);
 		return err ? err : -FI_EAGAIN;
 	}

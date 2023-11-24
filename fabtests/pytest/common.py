@@ -397,6 +397,10 @@ class ClientServerTest:
                 pytest.skip("no {} device".format(host_memory_type))
 
         command += " -D " + host_memory_type
+
+        if self._cmdline_args.do_dmabuf_reg_for_hmem:
+            command += " -R"
+
         additional_environment = None
 
         if "PYTEST_XDIST_WORKER" in os.environ:

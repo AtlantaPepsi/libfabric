@@ -694,7 +694,7 @@ static int cuda_hmem_detect_dmabuf_support(void)
  *         -FI_EOPNOTSUPP if dmabuf is not supported on the cuda device
  *         -FI_EIO upon CUDA API error
  */
-int cuda_get_dmabuf_fd(void *addr, uint64_t size, int *fd,
+int cuda_get_dmabuf_fd(const void *addr, uint64_t size, int *fd,
 		       uint64_t *offset)
 {
 #if HAVE_CUDA_DMABUF
@@ -715,7 +715,7 @@ int cuda_get_dmabuf_fd(void *addr, uint64_t size, int *fd,
 		return ret;
 
 	aligned_ptr = (uintptr_t) ofi_get_page_start(base_addr, host_page_size);
-	aligned_size = (uintptr_t) ofi_get_page_end((void *) ((uintptr_t) base_addr + total_size),
+	aligned_size = (uintptr_t) ofi_get_page_end((void *) ((uintptr_t) base_addr + total_size - 1),
 						    host_page_size) - (uintptr_t) aligned_ptr + 1;
 
 	cuda_ret = cuda_ops.cuMemGetHandleForAddressRange(
@@ -1024,7 +1024,7 @@ bool cuda_is_dmabuf_supported(void)
 	return false;
 }
 
-int cuda_get_dmabuf_fd(void *addr, uint64_t size, int *fd,
+int cuda_get_dmabuf_fd(const void *addr, uint64_t size, int *fd,
 		       uint64_t *offset)
 {
 	return -FI_ENOSYS;

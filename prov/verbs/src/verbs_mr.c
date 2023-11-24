@@ -80,7 +80,7 @@ static struct ibv_mr *vrb_reg_hmem_dmabuf(enum fi_hmem_iface iface,
 	if (failover_policy[iface] == ALWAYS)
 		goto failover;
 
-	err = ofi_hmem_get_dmabuf_fd(iface, (void *)buf, len, &fd, &offset);
+	err = ofi_hmem_get_dmabuf_fd(iface, buf, len, &fd, &offset);
 	if (err)
 		return NULL;
 
@@ -340,7 +340,7 @@ vrb_mr_cache_reg(struct vrb_domain *domain, const void *buf, size_t len,
 	info.device = device;
 
 	ret = (flags & OFI_MR_NOCACHE) ?
-	      ofi_mr_cache_reg(&domain->cache, &attr, &entry) :
+	      ofi_mr_cache_reg(&domain->cache, &attr, &entry, flags) :
 	      ofi_mr_cache_search(&domain->cache, &info, &entry);
 	if (OFI_UNLIKELY(ret))
 		return ret;
@@ -357,6 +357,9 @@ vrb_mr_reg_iface(struct fid *fid, const void *buf, size_t len, uint64_t access,
 		 uint64_t device)
 {
 	struct vrb_domain *domain;
+
+	if (flags & FI_MR_DMABUF)
+		return -FI_EINVAL;
 
 	domain = container_of(fid, struct vrb_domain,
 			      util_domain.domain_fid.fid);
@@ -416,7 +419,7 @@ static int vrb_mr_regattr(struct fid *fid, const struct fi_mr_attr *attr,
 
 	ofi_mr_update_attr(domain->util_domain.fabric->fabric_fid.api_version,
 			   domain->util_domain.info_domain_caps, attr,
-			   &cur_abi_attr);
+			   &cur_abi_attr, flags);
 
 	if (flags & FI_MR_DMABUF)
 		return vrb_reg_dmabuf(domain, &cur_abi_attr, flags, mr);

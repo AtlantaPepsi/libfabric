@@ -108,20 +108,32 @@ int synapseai_init(void)
 
 	err = synapseai_dl_init();
 	if (err)
-		return -FI_ENODATA;
+		return err;
 
 	status = synapseai_ops.synInitialize();
-	if (status != synSuccess)
-		return -FI_ENODATA;
+	if (status != synSuccess) {
+		FI_WARN(&core_prov, FI_LOG_CORE,
+			"synInitialize failed: %d\n", status);
+		return -FI_EIO;
+	}
 
 	status = synapseai_ops.synDeviceGetCount(&device_count);
-	if (status != synSuccess || device_count == 0)
-		/*
-		 * TODO We should call destroy here to free resources allocated
-		 * in initialize, but the destroy call hangs on instances without
-		 * a habana device
-		 */
-		return -FI_ENODATA;
+
+	/*
+	 * TODO: Starting from here we should call synDestroy before
+	 * returning error to free the resources allocated in synInitialize,
+	 * but the destroy call hangs on instances without
+	 * a habana device
+	 */
+
+	if (status != synSuccess) {
+		FI_WARN(&core_prov, FI_LOG_CORE,
+			"synDeviceGetCount failed: %d\n", status);
+		return -FI_EIO;
+	}
+
+	if (device_count == 0)
+		return -FI_ENOSYS;
 
 	return FI_SUCCESS;
 }
@@ -173,7 +185,7 @@ int synapseai_host_unregister(void *ptr)
  * @param offset[out] the offset within the dma-buf object
  * @return int On success, return 0. On failure, return a negative error code.
  */
-int synapseai_get_dmabuf_fd(void *addr, uint64_t size, int *fd,
+int synapseai_get_dmabuf_fd(const void *addr, uint64_t size, int *fd,
 			    uint64_t *offset)
 {
 	int ret;
@@ -233,7 +245,7 @@ int synapseai_host_unregister(void *ptr)
 	return -FI_ENOSYS;
 }
 
-int synapseai_get_dmabuf_fd(void *addr, uint64_t size, int *fd,
+int synapseai_get_dmabuf_fd(const void *addr, uint64_t size, int *fd,
 			    uint64_t *offset)
 {
 	return -FI_ENOSYS;
