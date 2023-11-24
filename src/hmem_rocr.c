@@ -1120,7 +1120,7 @@ out:
 	return dmabuf_support && dmabuf_kernel;
 }
 
-int rocr_hmem_get_dmabuf_fd(void *addr, uint64_t size, int *dmabuf_fd, 
+int rocr_hmem_get_dmabuf_fd(const void *addr, uint64_t size, int *dmabuf_fd,
 			    uint64_t *offset)
 {
 	if (!rocr_is_dmabuf_supported())
@@ -1269,7 +1269,8 @@ bool rocr_is_dmabuf_supported(void)
 	return false;
 }
 
-int rocr_hmem_get_dmabuf_fd(void *addr, uint64_t size, int *fd, uint64_t *offset)
+int rocr_hmem_get_dmabuf_fd(const void *addr, uint64_t size, int *dmabuf_fd,
+                uint64_t *offset)
 {
 	return -FI_ENOSYS;
 }
