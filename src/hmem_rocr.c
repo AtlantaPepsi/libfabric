@@ -1063,20 +1063,20 @@ int rocr_dev_reg_copy_from_hmem(uint64_t handle, void *dest, const void *src,
 	return FI_SUCCESS;
 }
 
-bool rocr_is_dmabuf_supported(void)
+static bool rocr_is_dmabuf_supported(void)
 {
 	hsa_status_t hsa_ret;
-	bool dmabuf_support = false, dmabuf_kernel = false;
+	bool use_dmabuf = false, dmabuf_support = false, dmabuf_kernel = false;
 
-	char *s;
-	if (!(s = getenv("FI_HMEM_ROCR_USE_DMABUF")) || !atoi(s)) goto out;
+	fi_param_define(NULL, "hmem_rocr_use_dmabuf", FI_PARAM_INT,
+			"Use dma-buf for sharing buffer with hardware. (default:0)");
+	fi_param_get_int(NULL, "hmem_rocr_use_dmabuf", &use_dmabuf);
+	if (!use_dmabuf) goto out;
 
 	// HSA_AMD_SYSTEM_INFO_DMABUF_SUPPORTED = 0x204, we use the number instead of var name
 	// for backward compatibility reasons.
 	hsa_ret = hsa_ops.hsa_system_get_info((hsa_system_info_t) 0x204, &dmabuf_support);
-
-	if (hsa_ret != HSA_STATUS_SUCCESS)
-	{
+	if (hsa_ret != HSA_STATUS_SUCCESS) {
 		FI_WARN(&core_prov, FI_LOG_CORE,
 			"Failed to retrieve system info (dmabuf): %s\n",
 			ofi_hsa_status_to_string(hsa_ret));
@@ -1084,55 +1084,57 @@ bool rocr_is_dmabuf_supported(void)
 	}
 
 #if HAVE_HSA_AMD_PORTABLE_EXPORT_DMABUF
-	const char kernel_opt1[] = "CONFIG_DMABUF_MOVE_NOTIFY=y";
-	const char kernel_opt2[] = "CONFIG_PCI_P2PDMA=y";
-	bool found_opt1 = false, found_opt2 = false;
-	FILE *fp;
-	struct utsname utsname;
-	char kernel_conf_file[128];
-	char buf[256];
+	{
+		const char kernel_opt1[] = "CONFIG_DMABUF_MOVE_NOTIFY=y";
+		const char kernel_opt2[] = "CONFIG_PCI_P2PDMA=y";
+		bool found_opt1 = false, found_opt2 = false;
+		FILE *fp;
+		struct utsname utsname;
+		char kernel_conf_file[128];
+		char buf[256];
 
-	if (uname(&utsname) == -1) {
-    		FI_INFO(&core_prov, FI_LOG_CORE,
-			"DMABUF support: Could not get kernel name\n");
-		goto out;
-	}
-
-	snprintf(kernel_conf_file, sizeof(kernel_conf_file),
-		"/boot/config-%s", utsname.release);
-	fp = fopen(kernel_conf_file, "r");
-
-	if (fp == NULL) {
-		FI_INFO(&core_prov, FI_LOG_CORE,
-			"DMABUF support: could not open kernel conf file %s error\n",
-			kernel_conf_file);
-		goto out;
-	}
-
-	while (fgets(buf, sizeof(buf), fp) != NULL) {
-		if (strstr(buf, kernel_opt1) != NULL) {
-			found_opt1 = true;
+		if (uname(&utsname) == -1) {
+			FI_INFO(&core_prov, FI_LOG_CORE,
+				"DMABUF support: Could not get kernel name\n");
+			goto out;
 		}
-		if (strstr(buf, kernel_opt2) != NULL) {
-			found_opt2 = true;
+
+		snprintf(kernel_conf_file, sizeof(kernel_conf_file),
+			"/boot/config-%s", utsname.release);
+		fp = fopen(kernel_conf_file, "r");
+
+		if (fp == NULL) {
+			FI_INFO(&core_prov, FI_LOG_CORE,
+				"DMABUF support: could not open kernel conf file %s error\n",
+				kernel_conf_file);
+			goto out;
 		}
-		if (found_opt1 && found_opt2) {
-			dmabuf_kernel = true;
-			break;
+
+		while (fgets(buf, sizeof(buf), fp) != NULL) {
+			if (strstr(buf, kernel_opt1) != NULL) {
+				found_opt1 = true;
+			}
+			if (strstr(buf, kernel_opt2) != NULL) {
+				found_opt2 = true;
+			}
+			if (found_opt1 && found_opt2) {
+				dmabuf_kernel = true;
+				break;
+			}
 		}
+		fclose(fp);
 	}
-	fclose(fp);
 #endif
 out:
 	return dmabuf_support && dmabuf_kernel;
 }
 
 int rocr_hmem_get_dmabuf_fd(const void *addr, uint64_t size, int *dmabuf_fd,
-			    uint64_t *offset)
+			     uint64_t *offset)
 {
 	static bool supported = false, checked = false;
-	if (!checked)
-	{
+
+	if (!checked) {
 		supported = rocr_is_dmabuf_supported();
 		checked = true;
 	}
@@ -1145,8 +1147,7 @@ int rocr_hmem_get_dmabuf_fd(const void *addr, uint64_t size, int *dmabuf_fd,
 	// maybe need base addr calculation here? empirically the hsa call here does it internally
 	hsa_ret = hsa_ops.hsa_amd_portable_export_dmabuf(addr, size, dmabuf_fd, offset);
 
-	if (hsa_ret != HSA_STATUS_SUCCESS)
-	{
+	if (hsa_ret != HSA_STATUS_SUCCESS) {
 		FI_WARN(&core_prov, FI_LOG_CORE,
 			"Failed to export dmabuf handle: %s\n",
 			ofi_hsa_status_to_string(hsa_ret));
@@ -1277,13 +1278,8 @@ int rocr_dev_reg_copy_from_hmem(uint64_t handle, void *dest, const void *src,
 	return -FI_ENOSYS;
 }
 
-bool rocr_is_dmabuf_supported(void)
-{
-	return false;
-}
-
 int rocr_hmem_get_dmabuf_fd(const void *addr, uint64_t size, int *dmabuf_fd,
-                uint64_t *offset)
+			     uint64_t *offset)
 {
 	return -FI_ENOSYS;
 }

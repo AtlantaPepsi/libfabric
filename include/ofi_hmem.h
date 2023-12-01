@@ -162,7 +162,6 @@ int rocr_dev_reg_copy_to_hmem(uint64_t handle, void *dest, const void *src,
 			      size_t size);
 int rocr_dev_reg_copy_from_hmem(uint64_t handle, void *dest, const void *src,
 				size_t size);
-bool rocr_is_dmabuf_supported(void);
 int rocr_hmem_get_dmabuf_fd(const void *addr, uint64_t size, int *dmabuf_fd,
 			    uint64_t *offset);
 
