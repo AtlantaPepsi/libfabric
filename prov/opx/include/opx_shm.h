@@ -59,7 +59,13 @@
 #include <limits.h>
 #include <signal.h>
 
+#ifdef OPX_DAOS_SUPPORT
 #define OPX_SHM_MAX_CONN_NUM 0xffff
+#else
+/* FI_OPX_MAX_HFIS * 256 */
+#define OPX_SHM_MAX_CONN_NUM 0x1000
+#endif
+
 #define OPX_SHM_SEGMENT_NAME_MAX_LENGTH (512)
 #define OPX_SHM_TX_CONNECT_MAX_WAIT (5000)	// 5 seconds
 #define OPX_SHM_SEGMENT_NAME_PREFIX "/opx.shm."

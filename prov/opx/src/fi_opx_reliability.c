@@ -47,7 +47,7 @@
 #include <execinfo.h>
 #include <limits.h>
 
-#ifdef OPX_PING_DEBUG
+#ifdef OPX_DEBUG_COUNTERS_RELIABILITY_PING
 /*
  * Names of ping stats for ping debug.
  */
@@ -72,10 +72,6 @@ enum ping_count_name {
 
 #define NUM_PING_STATS_COUNT THROTTLED + 1
 #define NUM_PING_STATS_DETAILED UEPKT_RECV
-
-static uint64_t ping_counts[NUM_PING_STATS_COUNT] = { };
-
-#define INC_PING_COUNT(name) ++ping_counts[name]
 
 // The length of all the ring buffers.
 #define PDCCOUNT 4096
@@ -117,15 +113,85 @@ static pdc_list ping_count_pdcs[NUM_PING_STATS_DETAILED] = { };
 		fprintf(stderr,"------\n");						\
 	} while(0)
 
-#define INC_PING_STAT(name, k, s, c)					\
-	do {								\
-		INC_PING_COUNT((name));					\
-		INC_PDC((name), (k), (s), (c));				\
+#define INC_PING_STAT(name, k, s, c)													\
+	do {																\
+			struct fi_opx_ep * opx_ep = container_of(ep, struct fi_opx_ep, ep_fid);						\
+			switch(name) {													\
+				case PRE_ACKS_SENT:											\
+					FI_OPX_DEBUG_COUNTERS_INC(opx_ep->debug_counters.reliability_ping.acks_preemptive_sent);	\
+					break;												\
+				case ACKS_SENT:												\
+					FI_OPX_DEBUG_COUNTERS_INC(opx_ep->debug_counters.reliability_ping.acks_sent);			\
+					break;												\
+				case ACKS_RECV:												\
+					FI_OPX_DEBUG_COUNTERS_INC(opx_ep->debug_counters.reliability_ping.acks_received);		\
+					break;												\
+				case ACKS_IGNORED:											\
+					FI_OPX_DEBUG_COUNTERS_INC(opx_ep->debug_counters.reliability_ping.acks_ignored);		\
+					break;												\
+				case PRE_NACKS_SENT:											\
+					FI_OPX_DEBUG_COUNTERS_INC(opx_ep->debug_counters.reliability_ping.nacks_preemptive_sent);	\
+					break;												\
+				case NACKS_SENT:											\
+					FI_OPX_DEBUG_COUNTERS_INC(opx_ep->debug_counters.reliability_ping.nacks_sent);			\
+					break;												\
+				case NACKS_RECV:											\
+					FI_OPX_DEBUG_COUNTERS_INC(opx_ep->debug_counters.reliability_ping.nacks_received);		\
+					break;												\
+				case NACKS_IGNORED:											\
+					FI_OPX_DEBUG_COUNTERS_INC(opx_ep->debug_counters.reliability_ping.nacks_ignored);		\
+					break;												\
+				case PINGS_SENT:											\
+					FI_OPX_DEBUG_COUNTERS_INC(opx_ep->debug_counters.reliability_ping.pings_sent);			\
+					break;												\
+				case PINGS_RECV:											\
+					FI_OPX_DEBUG_COUNTERS_INC(opx_ep->debug_counters.reliability_ping.pings_received);		\
+					break;												\
+				default:												\
+					assert(0);											\
+					break;												\
+			}														\
+			INC_PDC(name, k, s, c);												\
 	} while(0)
 #else
-#define INC_PING_STAT(name, k, s, c)					\
-	do {								\
-		INC_PING_COUNT((name));					\
+#define INC_PING_STAT(name, k, s, c)													\
+	do {																\
+			struct fi_opx_ep * opx_ep = container_of(ep, struct fi_opx_ep, ep_fid);						\
+			switch(name) {													\
+				case PRE_ACKS_SENT:											\
+					FI_OPX_DEBUG_COUNTERS_INC(opx_ep->debug_counters.reliability_ping.acks_preemptive_sent);	\
+					break;												\
+				case ACKS_SENT:												\
+					FI_OPX_DEBUG_COUNTERS_INC(opx_ep->debug_counters.reliability_ping.acks_sent);			\
+					break;												\
+				case ACKS_RECV:												\
+					FI_OPX_DEBUG_COUNTERS_INC(opx_ep->debug_counters.reliability_ping.acks_received);		\
+					break;												\
+				case ACKS_IGNORED:											\
+					FI_OPX_DEBUG_COUNTERS_INC(opx_ep->debug_counters.reliability_ping.acks_ignored);		\
+					break;												\
+				case PRE_NACKS_SENT:											\
+					FI_OPX_DEBUG_COUNTERS_INC(opx_ep->debug_counters.reliability_ping.nacks_preemptive_sent);	\
+					break;												\
+				case NACKS_SENT:											\
+					FI_OPX_DEBUG_COUNTERS_INC(opx_ep->debug_counters.reliability_ping.nacks_sent);			\
+					break;												\
+				case NACKS_RECV:											\
+					FI_OPX_DEBUG_COUNTERS_INC(opx_ep->debug_counters.reliability_ping.nacks_received);		\
+					break;												\
+				case NACKS_IGNORED:											\
+					FI_OPX_DEBUG_COUNTERS_INC(opx_ep->debug_counters.reliability_ping.nacks_ignored);		\
+					break;												\
+				case PINGS_SENT:											\
+					FI_OPX_DEBUG_COUNTERS_INC(opx_ep->debug_counters.reliability_ping.pings_sent);			\
+					break;												\
+				case PINGS_RECV:											\
+					FI_OPX_DEBUG_COUNTERS_INC(opx_ep->debug_counters.reliability_ping.pings_received);		\
+					break;												\
+				default:												\
+					assert(0);											\
+					break;												\
+			}														\
 	} while(0)
 
 #endif
@@ -143,33 +209,15 @@ static pdc_list ping_count_pdcs[NUM_PING_STATS_DETAILED] = { };
 
 void dump_ping_counts()
 {
+#ifdef OPX_DUMP_PINGS
 	// This bit is a work around to try and prevent the ranks from dumping
 	// their output at the same time. It will obviously only work when
-	// only a few ranks are involved - try playing with the modulo if you
-	// insist on using OPX_PING_DEBUG with more than 4 ranks...
+	// only a few ranks are involved.
+
 	pid_t pid = getpid();
 	unsigned long r = (pid % 4) * 3;
 	fprintf(stderr,"%d delaying %lu seconds.\n",pid,r);
-	sleep(r);
 
-	fprintf(stderr,"(%d) ==== PING COUNT ====\n", pid);
-	fprintf(stderr,"(%d) Pings Sent       %lu\n", pid, ping_counts[PINGS_SENT]);
-	fprintf(stderr,"(%d) Pings Rcvd       %lu\n", pid, ping_counts[PINGS_RECV]);
-	fprintf(stderr,"(%d) Pre Acks Sent    %lu\n", pid, ping_counts[PRE_ACKS_SENT]);
-	fprintf(stderr,"(%d) Acks Sent        %lu\n", pid, ping_counts[ACKS_SENT]);
-	fprintf(stderr,"(%d) Acks Recv'd      %lu\n", pid, ping_counts[ACKS_RECV]);
-	fprintf(stderr,"(%d) Acks Ignored     %lu\n", pid, ping_counts[ACKS_IGNORED]);
-	fprintf(stderr,"(%d) Pre-Nacks Sent   %lu\n", pid, ping_counts[PRE_NACKS_SENT]);
-	fprintf(stderr,"(%d) Nacks Sent       %lu\n", pid, ping_counts[NACKS_SENT]);
-	fprintf(stderr,"(%d) Nacks Recv'd     %lu\n", pid, ping_counts[NACKS_RECV]);
-	fprintf(stderr,"(%d) Nacks Ignored    %lu\n", pid, ping_counts[NACKS_IGNORED]);
-	fprintf(stderr,"(%d) UEPKT Recv'd     %lu\n", pid, ping_counts[UEPKT_RECV]);
-	fprintf(stderr,"(%d) Throttle MaxOut  %lu\n", pid, ping_counts[THROTTLED_MAX_OUTSTANDING]);
-	fprintf(stderr,"(%d) Throttle Nacks   %lu\n", pid, ping_counts[THROTTLED_NACKS]);
-	fprintf(stderr,"(%d) Throttle Cnt     %lu\n", pid, ping_counts[THROTTLED]);
-	fprintf(stderr,"(%d) ==== PING COUNT ====\n", pid);
-
-#ifdef OPX_DUMP_PINGS
 	DUMP_PINGS(pid, PINGS_SENT);
 	DUMP_PINGS(pid, PINGS_RECV);
 	DUMP_PINGS(pid, PRE_ACKS_SENT);
@@ -185,25 +233,24 @@ void dump_ping_counts()
 
 #else
 
-#define INC_PING_COUNT(name)
 #define INC_PING_STAT(name, k, s, c)
 #define INC_PING_STAT_COND(cond, name, k, s, c)
 
 #endif
 
-void fi_opx_reliability_inc_throttle_count()
+void fi_opx_reliability_inc_throttle_count(struct fid_ep *ep)
 {
-	INC_PING_COUNT(THROTTLED);
+	FI_OPX_DEBUG_COUNTERS_INC(container_of(ep, struct fi_opx_ep, ep_fid)->debug_counters.reliability_ping.throttled);
 }
 
-void fi_opx_reliability_inc_throttle_nacks()
+void fi_opx_reliability_inc_throttle_nacks(struct fid_ep *ep)
 {
-	INC_PING_COUNT(THROTTLED_NACKS);
+	FI_OPX_DEBUG_COUNTERS_INC(container_of(ep, struct fi_opx_ep, ep_fid)->debug_counters.reliability_ping.throttled_nacks);
 }
 
-void fi_opx_reliability_inc_throttle_maxo()
+void fi_opx_reliability_inc_throttle_maxo(struct fid_ep *ep)
 {
-	INC_PING_COUNT(THROTTLED_MAX_OUTSTANDING);
+	FI_OPX_DEBUG_COUNTERS_INC(container_of(ep, struct fi_opx_ep, ep_fid)->debug_counters.reliability_ping.throttled_max_outstanding);
 }
 
 #if 0
@@ -395,14 +442,15 @@ ssize_t fi_opx_hfi1_tx_reliability_inject_ud_opcode (struct fid_ep *ep,
 	volatile uint64_t * const scb =
 		FI_OPX_HFI1_PIO_SCB_HEAD(opx_ep->tx->pio_scb_sop_first, pio_state);
 
-	scb[0] = model.qw0 | (0x1 << FI_OPX_HFI1_PBC_CR_SHIFT);
-	scb[1] = model.hdr.qw[0] | lrh_dlid;
-	scb[2] = model.hdr.qw[1] | bth_rx;
-	scb[3] = model.hdr.qw[2];
-	scb[4] = model.hdr.qw[3];
-	scb[5] = 0;
-	scb[6] = 0;
-	scb[7] = key;
+	OPX_HFI1_BAR_STORE(&scb[0], model.qw0 | (0x1 << FI_OPX_HFI1_PBC_CR_SHIFT));
+	OPX_HFI1_BAR_STORE(&scb[1], model.hdr.qw[0] | lrh_dlid);
+	OPX_HFI1_BAR_STORE(&scb[2], model.hdr.qw[1] | bth_rx);
+	OPX_HFI1_BAR_STORE(&scb[3], model.hdr.qw[2]);
+	OPX_HFI1_BAR_STORE(&scb[4], model.hdr.qw[3]);
+	OPX_HFI1_BAR_STORE(&scb[5], 0UL);
+	OPX_HFI1_BAR_STORE(&scb[6], 0UL);
+	OPX_HFI1_BAR_STORE(&scb[7], key);
+	
 
 	/* consume one credit for the packet header */
 	FI_OPX_HFI1_CONSUME_SINGLE_CREDIT(pio_state);
@@ -596,23 +644,14 @@ ssize_t fi_opx_hfi1_tx_reliability_inject (struct fid_ep *ep,
 					&opx_ep->reliability->service.tx.hfi1.ack_model :
 					&opx_ep->reliability->service.tx.hfi1.nack_model );
 
-	//uint64_t tmp[8];
-	//tmp[0] =
-		scb[0] = model->qw0 | (0x1 << FI_OPX_HFI1_PBC_CR_SHIFT);
-	//tmp[1] =
-		scb[1] = model->hdr.qw[0] | lrh_dlid;
-	//tmp[2] =
-		scb[2] = model->hdr.qw[1] | bth_rx;
-	//tmp[3] =
-		scb[3] = model->hdr.qw[2];
-	//tmp[4] =
-		scb[4] = model->hdr.qw[3];
-	//tmp[5] =
-		scb[5] = psn_count_24;
-	//tmp[6] =
-		scb[6] = psn_start_24;
-	//tmp[7] =
-		scb[7] = key;					/* service.key */
+	OPX_HFI1_BAR_STORE(&scb[0], model->qw0 | (0x1 << FI_OPX_HFI1_PBC_CR_SHIFT));
+	OPX_HFI1_BAR_STORE(&scb[1], model->hdr.qw[0] | lrh_dlid);
+	OPX_HFI1_BAR_STORE(&scb[2], model->hdr.qw[1] | bth_rx);
+	OPX_HFI1_BAR_STORE(&scb[3], model->hdr.qw[2]);
+	OPX_HFI1_BAR_STORE(&scb[4], model->hdr.qw[3]);
+	OPX_HFI1_BAR_STORE(&scb[5], psn_count_24);
+	OPX_HFI1_BAR_STORE(&scb[6], psn_start_24);
+	OPX_HFI1_BAR_STORE(&scb[7], key); /* service.key */
 
 	//fi_opx_hfi1_dump_stl_packet_hdr((struct fi_opx_hfi1_stl_packet_hdr *)&tmp[1], __func__, __LINE__);
 
@@ -678,7 +717,7 @@ ssize_t fi_opx_hfi1_rx_reliability_ping_response (struct fid_ep *ep,
 				opcode);
 		INC_PING_STAT_COND(rc == FI_SUCCESS,
 			opcode == FI_OPX_HFI_UD_OPCODE_RELIABILITY_ACK ? ACKS_SENT : NACKS_SENT,
-			key, ping_start_24, ack_count_24);
+			key, psn_start_24, psn_count_24);
 
 		psn_count -= psn_count_24;
 		psn_start += psn_count_24;
@@ -898,7 +937,7 @@ void fi_opx_hfi1_reliability_iov_payload_check(
 		const char *func,
 		const int line)
 {
-	if (!replay->use_iov) {
+	if (!replay->use_iov || replay->hmem_iface != FI_HMEM_SYSTEM) {
 		return;
 	}
 	uint32_t copy_payload_qws = MIN(8, replay->iov->iov_len >> 3);
@@ -1459,14 +1498,15 @@ ssize_t fi_opx_reliability_service_do_replay (struct fi_opx_reliability_service 
 	volatile uint64_t * const scb =
 		FI_OPX_HFI1_PIO_SCB_HEAD(service->tx.hfi1.pio_scb_sop_first, pio_state);
 
-	scb[0] = replay->scb.qw0;
-	scb[1] = replay->scb.hdr.qw[0];
-	scb[2] = replay->scb.hdr.qw[1];
-	scb[3] = replay->scb.hdr.qw[2];
-	scb[4] = replay->scb.hdr.qw[3];
-	scb[5] = replay->scb.hdr.qw[4];
-	scb[6] = replay->scb.hdr.qw[5];
-	scb[7] = replay->scb.hdr.qw[6];
+	OPX_HFI1_BAR_STORE(&scb[0], replay->scb.qw0);
+	OPX_HFI1_BAR_STORE(&scb[1], replay->scb.hdr.qw[0]);
+	OPX_HFI1_BAR_STORE(&scb[2], replay->scb.hdr.qw[1]);
+	OPX_HFI1_BAR_STORE(&scb[3], replay->scb.hdr.qw[2]);
+	OPX_HFI1_BAR_STORE(&scb[4], replay->scb.hdr.qw[3]);
+	OPX_HFI1_BAR_STORE(&scb[5], replay->scb.hdr.qw[4]);
+	OPX_HFI1_BAR_STORE(&scb[6], replay->scb.hdr.qw[5]);
+	OPX_HFI1_BAR_STORE(&scb[7], replay->scb.hdr.qw[6]);
+	
 
 	FI_OPX_HFI1_CHECK_CREDITS_FOR_ERROR((service->tx.hfi1.pio_credits_addr));
 
@@ -1526,14 +1566,14 @@ ssize_t fi_opx_reliability_service_do_replay (struct fi_opx_reliability_service 
 		uint16_t i;
 		for (i=0; i<contiguous_full_blocks_to_write; ++i) {
 
-			scb_payload[0] = buf_qws[0];
-			scb_payload[1] = buf_qws[1];
-			scb_payload[2] = buf_qws[2];
-			scb_payload[3] = buf_qws[3];
-			scb_payload[4] = buf_qws[4];
-			scb_payload[5] = buf_qws[5];
-			scb_payload[6] = buf_qws[6];
-			scb_payload[7] = buf_qws[7];
+			OPX_HFI1_BAR_STORE(&scb_payload[0],  buf_qws[0]);
+			OPX_HFI1_BAR_STORE(&scb_payload[1],  buf_qws[1]);
+			OPX_HFI1_BAR_STORE(&scb_payload[2],  buf_qws[2]);
+			OPX_HFI1_BAR_STORE(&scb_payload[3],  buf_qws[3]);
+			OPX_HFI1_BAR_STORE(&scb_payload[4],  buf_qws[4]);
+			OPX_HFI1_BAR_STORE(&scb_payload[5],  buf_qws[5]);
+			OPX_HFI1_BAR_STORE(&scb_payload[6],  buf_qws[6]);
+			OPX_HFI1_BAR_STORE(&scb_payload[7],  buf_qws[7]);
 
 			scb_payload += 8;
 			buf_qws += 8;
@@ -2154,12 +2194,6 @@ uint8_t fi_opx_reliability_service_init (struct fi_opx_reliability_service * ser
 
 		origin_reliability_rx = hfi1->info.rxe.id;
 
-	} else if (OFI_RELIABILITY_KIND_NONE == reliability_kind) {
-
-		service->lid_be = (uint32_t)-1;
-		service->reliability_kind = reliability_kind;
-		return origin_reliability_rx;
-
 	} else {
 
 		/* invalid reliability kind */
@@ -2193,7 +2227,7 @@ uint8_t fi_opx_reliability_service_init (struct fi_opx_reliability_service * ser
 		/* BTH */
 		service->tx.hfi1.ping_model.hdr.stl.bth.opcode = FI_OPX_HFI_BTH_OPCODE_UD;
 		service->tx.hfi1.ping_model.hdr.stl.bth.bth_1 = 0;
-		service->tx.hfi1.ping_model.hdr.stl.bth.pkey = htons(FI_OPX_HFI1_DEFAULT_P_KEY);
+		service->tx.hfi1.ping_model.hdr.stl.bth.pkey = htons(hfi1->pkey);
 		service->tx.hfi1.ping_model.hdr.stl.bth.ecn = 0;
 		service->tx.hfi1.ping_model.hdr.stl.bth.qp = hfi1->bthqp;
 		service->tx.hfi1.ping_model.hdr.stl.bth.unused = 0;
@@ -2302,24 +2336,6 @@ uint8_t fi_opx_reliability_service_init (struct fi_opx_reliability_service * ser
 	service->usec_max = usec;
 
 	service->usec_next = fi_opx_timer_next_event_usec(&service->tx.timer, &service->tx.timestamp, service->usec_max);
-
-	int nack_threshold;
-	rc = fi_param_get_int(fi_opx_global.prov, "reliability_service_nack_threshold", &nack_threshold);
-	if (rc == FI_SUCCESS) {
-		if (nack_threshold > 0 && nack_threshold <= 32767) {
-			FI_TRACE(fi_opx_global.prov, FI_LOG_EP_DATA, "FI_OPX_RELIABILITY_SERVICE_NACK_THRESHOLD set to %d\n", nack_threshold);
-		} else {
-			FI_TRACE(fi_opx_global.prov, FI_LOG_EP_DATA,
-				"Invalid value %d specified for FI_OPX_RELIABILITY_SERVICE_NACK_THRESHOLD. Valid values are 1-32767. Using default value of 1\n",
-				nack_threshold);
-			nack_threshold = 1;
-		}
-	} else {
-		FI_TRACE(fi_opx_global.prov, FI_LOG_EP_DATA,
-			"FI_OPX_RELIABILITY_SERVICE_NACK_THRESHOLD not specified, using default value of 1\n");
-		nack_threshold = 1;
-	}
-	service->nack_threshold = nack_threshold;
 
 	/*
 	 * Maximum number of commands to process from atomic fifo before
@@ -2550,6 +2566,18 @@ void fi_opx_reliability_service_fini (struct fi_opx_reliability_service * servic
 		ofi_bufpool_destroy(service->work_pending_pool);
 	}
 
+	if (service->tx.flow) {
+		rbtDelete(service->tx.flow);
+	}
+
+	if (service->rx.flow) {
+		rbtDelete(service->rx.flow);
+	}
+
+	if (service->handshake_init) {
+		rbtDelete(service->handshake_init);
+	}
+
 	return;
 }
 
@@ -2567,9 +2595,6 @@ void fi_opx_reliability_client_init (struct fi_opx_reliability_client_state * st
 	state->reliability_kind = service->reliability_kind;
 
 	state->service = service;
-
-	if (service->reliability_kind == OFI_RELIABILITY_KIND_NONE)
-		return;
 
 	/* ---- rx and tx ----*/
 	if (service->reliability_kind == OFI_RELIABILITY_KIND_OFFLOAD) {
@@ -2637,13 +2662,9 @@ void fi_opx_reliability_client_init (struct fi_opx_reliability_client_state * st
 
 void fi_opx_reliability_client_fini (struct fi_opx_reliability_client_state * state)
 {
-
-#ifdef OPX_PING_DEBUG
+#ifdef OPX_DEBUG_COUNTERS_RELIABILITY_PING
 	dump_ping_counts();
 #endif
-
-	if (state->reliability_kind == OFI_RELIABILITY_KIND_NONE)
-		return;
 
 	if (state->reliability_kind == OFI_RELIABILITY_KIND_OFFLOAD) {
 		fi_opx_atomic_fifo_producer_fini(&state->fifo);
@@ -2671,6 +2692,17 @@ void fi_opx_reliability_client_fini (struct fi_opx_reliability_client_state * st
 
 	/* TODO - delete rbtree and flows, but first have to notify
 	 * reliability service of the tear-down */
+	/*if (state->flow_rbtree_resynch) {
+		rbtDelete(state->flow_rbtree_resynch);
+	}
+
+	if (state->rx_flow_rbtree) {
+		rbtDelete(state->rx_flow_rbtree);
+	}
+
+	if(state->tx_flow_rbtree) {
+		rbtDelete(state->tx_flow_rbtree);
+	}*/
 }
 
 __OPX_FORCE_INLINE__
@@ -2694,7 +2726,6 @@ void fi_opx_reliability_rx_exception (struct fi_opx_reliability_client_state * s
 		uint64_t slid, uint64_t origin_tx, uint32_t psn,
 		struct fid_ep *ep, const union fi_opx_hfi1_packet_hdr * const hdr, const uint8_t * const payload)
 {
-
 	/* reported in LRH as the number of 4-byte words in the packet; header + payload + icrc */
 	const uint16_t lrh_pktlen_le = ntohs(hdr->stl.lrh.pktlen);
 	const size_t total_bytes_to_copy = (lrh_pktlen_le - 1) * 4;	/* do not copy the trailing icrc */
@@ -2795,8 +2826,7 @@ void fi_opx_reliability_rx_exception (struct fi_opx_reliability_client_state * s
 
 		return;
 	}
-
-	INC_PING_COUNT(UEPKT_RECV);
+	FI_OPX_DEBUG_COUNTERS_INC(container_of(ep, struct fi_opx_ep, ep_fid)->debug_counters.reliability_ping.uepkt_received);
 
 	/*
 	 * Scale the received PSN up into the same window as the expected PSN.
@@ -3475,7 +3505,7 @@ ssize_t fi_opx_reliability_do_remote_ep_resynch(struct fid_ep *ep,
 		return FI_SUCCESS;
 	}
 
-	if (fi_opx_hfi1_tx_is_intranode(ep, dest_addr.fi, caps)) {
+	if (fi_opx_hfi1_tx_is_intranode(opx_ep, dest_addr, caps)) {
 		/* INTRA-NODE */
 
 		/* HFI Rank Support: Retreive extended addressing data

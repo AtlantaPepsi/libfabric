@@ -63,8 +63,8 @@ const char *efa_rdm_ep_raw_addr_str(struct efa_rdm_ep *ep, char *buf, size_t *bu
 
 /**
  * @brief return peer's raw address in #efa_ep_addr
- * 
- * @param[in] ep		end point 
+ *
+ * @param[in] ep		end point
  * @param[in] addr 		libfabric address
  * @returns
  * If peer exists, return peer's raw addrress as pointer to #efa_ep_addr;
@@ -102,8 +102,8 @@ int32_t efa_rdm_ep_get_peer_ahn(struct efa_rdm_ep *ep, fi_addr_t addr)
 
 /**
  * @brief return peer's raw address in a reable string
- * 
- * @param[in] ep		end point 
+ *
+ * @param[in] ep		end point
  * @param[in] addr 		libfabric address
  * @param[out] buf		a buffer tat to be used to store string
  * @param[in,out] buflen	length of `buf` as input. length of the string as output.
@@ -117,8 +117,8 @@ const char *efa_rdm_ep_get_peer_raw_addr_str(struct efa_rdm_ep *ep, fi_addr_t ad
 
 /**
  * @brief get pointer to efa_rdm_peer structure for a given libfabric address
- * 
- * @param[in]		ep		endpoint 
+ *
+ * @param[in]		ep		endpoint
  * @param[in]		addr 		libfabric address
  * @returns if peer exists, return pointer to #efa_rdm_peer;
  *          otherwise, return NULL.
@@ -155,12 +155,16 @@ struct efa_rdm_ope *efa_rdm_ep_alloc_rxe(struct efa_rdm_ep *ep, fi_addr_t addr, 
 		EFA_WARN(FI_LOG_EP_CTRL, "RX entries exhausted\n");
 		return NULL;
 	}
-	memset(rxe, 0, sizeof(struct efa_rdm_ope));
 
 	rxe->ep = ep;
 	dlist_insert_tail(&rxe->ep_entry, &ep->rxe_list);
 	rxe->type = EFA_RDM_RXE;
+	rxe->internal_flags = 0;
+	rxe->fi_flags = 0;
 	rxe->rx_id = ofi_buf_index(rxe);
+	rxe->iov_count = 0;
+	memset(rxe->mr, 0, sizeof(*rxe->mr) * EFA_RDM_IOV_LIMIT);
+
 	dlist_init(&rxe->queued_pkts);
 
 	rxe->state = EFA_RDM_RXE_INIT;
@@ -178,12 +182,21 @@ struct efa_rdm_ope *efa_rdm_ep_alloc_rxe(struct efa_rdm_ep *ep, fi_addr_t addr, 
 		rxe->peer = NULL;
 	}
 
-	rxe->bytes_runt = 0;
+	rxe->bytes_received = 0;
 	rxe->bytes_received_via_mulreq = 0;
+	rxe->bytes_copied = 0;
+	rxe->bytes_queued_blocking_copy = 0;
+	rxe->bytes_acked = 0;
+	rxe->bytes_sent = 0;
+	rxe->bytes_runt = 0;
 	rxe->cuda_copy_method = EFA_RDM_CUDA_COPY_UNSPEC;
 	rxe->efa_outstanding_tx_ops = 0;
+	rxe->window = 0;
 	rxe->op = op;
 	rxe->peer_rxe = NULL;
+	rxe->unexp_pkt = NULL;
+	rxe->atomrsp_data = NULL;
+	rxe->bytes_read_total_len = 0;
 
 	switch (op) {
 	case ofi_op_tagged:
@@ -275,10 +288,11 @@ int efa_rdm_ep_post_user_recv_buf(struct efa_rdm_ep *ep, struct efa_rdm_ope *rxe
 
 /* create a new txe */
 struct efa_rdm_ope *efa_rdm_ep_alloc_txe(struct efa_rdm_ep *efa_rdm_ep,
-					   const struct fi_msg *msg,
-					   uint32_t op,
-					   uint64_t tag,
-					   uint64_t flags)
+					 struct efa_rdm_peer *peer,
+					 const struct fi_msg *msg,
+					 uint32_t op,
+					 uint64_t tag,
+					 uint64_t flags)
 {
 	struct efa_rdm_ope *txe;
 
@@ -288,7 +302,7 @@ struct efa_rdm_ope *efa_rdm_ep_alloc_txe(struct efa_rdm_ep *efa_rdm_ep,
 		return NULL;
 	}
 
-	efa_rdm_txe_construct(txe, efa_rdm_ep, msg, op, flags);
+	efa_rdm_txe_construct(txe, efa_rdm_ep, peer, msg, op, flags);
 	if (op == ofi_op_tagged) {
 		txe->cq_entry.tag = tag;
 		txe->tag = tag;
@@ -672,4 +686,24 @@ void efa_rdm_ep_post_handshake_or_queue(struct efa_rdm_ep *ep, struct efa_rdm_pe
 	}
 
 	peer->flags |= EFA_RDM_PEER_HANDSHAKE_SENT;
+}
+
+/**
+ * @brief Get memory alignment for given ep and hmem iface
+ *
+ * @param ep efa rdm ep
+ * @param iface hmem iface
+ * @return size_t the memory alignment
+ */
+size_t efa_rdm_ep_get_memory_alignment(struct efa_rdm_ep *ep, enum fi_hmem_iface iface)
+{
+	size_t memory_alignment = EFA_RDM_DEFAULT_MEMORY_ALIGNMENT;
+
+	if (ep->sendrecv_in_order_aligned_128_bytes) {
+		memory_alignment = EFA_RDM_IN_ORDER_ALIGNMENT;
+	} else if (iface == FI_HMEM_CUDA) {
+		memory_alignment = EFA_RDM_CUDA_MEMORY_ALIGNMENT;
+	}
+
+	return memory_alignment;
 }

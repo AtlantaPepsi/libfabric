@@ -52,6 +52,7 @@ bin_PROGRAMS = \
 	benchmarks/fi_rdm_cntr_pingpong \
 	benchmarks/fi_dgram_pingpong \
 	benchmarks/fi_rdm_pingpong \
+	benchmarks/fi_rma_pingpong \
 	benchmarks/fi_rdm_tagged_pingpong \
 	benchmarks/fi_rdm_tagged_bw \
 	unit/fi_eq_test \
@@ -110,8 +111,6 @@ nobase_dist_config_DATA = \
         test_configs/verbs/all.test \
         test_configs/verbs/quick.test \
 	test_configs/verbs/verbs.exclude \
-	test_configs/usnic/all.test \
-	test_configs/usnic/quick.test \
 	test_configs/psm2/all.test \
 	test_configs/psm2/verify.test \
 	test_configs/psm2/psm2.exclude \
@@ -400,6 +399,11 @@ benchmarks_fi_rdm_pingpong_SOURCES = \
 	benchmarks/rdm_pingpong.c \
 	$(benchmarks_srcs)
 benchmarks_fi_rdm_pingpong_LDADD = libfabtests.la
+
+benchmarks_fi_rma_pingpong_SOURCES = \
+	benchmarks/rma_pingpong.c \
+	$(benchmarks_srcs)
+benchmarks_fi_rma_pingpong_LDADD = libfabtests.la
 
 benchmarks_fi_rdm_tagged_pingpong_SOURCES = \
 	benchmarks/rdm_tagged_pingpong.c \
