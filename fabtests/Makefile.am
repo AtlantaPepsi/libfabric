@@ -71,6 +71,13 @@ bin_PROGRAMS = \
 	regression/sighandler_test \
 	common/check_hmem
 
+bin_PROGRAMS += \
+	component/dmabuf-rdma/rocr_rdmabw \
+	component/dmabuf-rdma/rocr_mr_reg \
+	component/dmabuf-rdma/fi_rocr_mr_reg \
+	component/dmabuf-rdma/fi_rocr_rdmabw 
+#	component/dmabuf-rdma/rocr_memcopy
+
 if HAVE_ZE_DEVEL
 if HAVE_VERBS_DEVEL
 bin_PROGRAMS += \
@@ -510,6 +517,77 @@ component_sock_test_LDADD = libfabtests.la
 
 component_sock_test_CFLAGS = \
 	$(AM_CFLAGS)
+
+#rocr
+component_dmabuf_rdma_rocr_rdmabw_SOURCES = \
+	component/dmabuf-rdma/rdmabw-rocr.c \
+	component/dmabuf-rdma/util.c \
+	component/dmabuf-rdma/util.h \
+	component/dmabuf-rdma/rocr.c \
+	component/dmabuf-rdma/rocr.h \
+	component/dmabuf-rdma/dmabuf_reg.c \
+	component/dmabuf-rdma/dmabuf_reg.h
+
+component_dmabuf_rdma_rocr_rdmabw_LDADD = libfabtests.la
+
+component_dmabuf_rdma_rocr_rdmabw_CFLAGS = \
+	$(AM_CFLAGS) \
+	-I$(srcdir)/component/dmabuf-rdma
+
+component_dmabuf_rdma_rocr_mr_reg_SOURCES = \
+	component/dmabuf-rdma/mr-reg-rocr.c \
+	component/dmabuf-rdma/util.h \
+	component/dmabuf-rdma/dmabuf_reg.c \
+	component/dmabuf-rdma/dmabuf_reg.h
+
+component_dmabuf_rdma_rocr_mr_reg_LDADD = libfabtests.la
+
+component_dmabuf_rdma_rocr_mr_reg_CFLAGS = \
+	$(AM_CFLAGS) \
+	-I$(srcdir)/component/dmabuf-rdma
+
+
+component_dmabuf_rdma_fi_rocr_rdmabw_SOURCES = \
+	component/dmabuf-rdma/fi-rdmabw-rocr.c \
+	component/dmabuf-rdma/ofi_ctx_pool.h \
+	component/dmabuf-rdma/util.c \
+	component/dmabuf-rdma/util.h \
+	component/dmabuf-rdma/rocr.c \
+	component/dmabuf-rdma/rocr.h \
+	component/dmabuf-rdma/dmabuf_reg.c \
+	component/dmabuf-rdma/dmabuf_reg.h
+
+component_dmabuf_rdma_fi_rocr_rdmabw_LDADD = libfabtests.la
+
+component_dmabuf_rdma_fi_rocr_rdmabw_CFLAGS = \
+	$(AM_CFLAGS) \
+	-I$(srcdir)/component/dmabuf-rdma
+
+
+component_dmabuf_rdma_fi_rocr_mr_reg_SOURCES = \
+	component/dmabuf-rdma/fi-mr-reg-rocr.c \
+	component/dmabuf-rdma/util.h \
+	component/dmabuf-rdma/rocr.c \
+	component/dmabuf-rdma/rocr.h \
+	component/dmabuf-rdma/dmabuf_reg.c \
+	component/dmabuf-rdma/dmabuf_reg.h
+
+component_dmabuf_rdma_fi_rocr_mr_reg_LDADD = libfabtests.la
+
+component_dmabuf_rdma_fi_rocr_mr_reg_CFLAGS = \
+	$(AM_CFLAGS) \
+	-I$(srcdir)/component/dmabuf-rdma
+
+
+#component_dmabuf_rdma_rocr_memcopy_SOURCES = \
+#	component/dmabuf-rdma/memcopy-rocr.c \
+#	component/dmabuf-rdma/util.c \
+#	component/dmabuf-rdma/util.h
+
+#component_dmabuf_rdma_rocr_memcopy_LDADD = libfabtests.la
+
+#component_dmabuf_rdma_rocr_memcopy_CFLAGS = \
+#	$(AM_CFLAGS)
 
 if HAVE_ZE_DEVEL
 if HAVE_VERBS_DEVEL
