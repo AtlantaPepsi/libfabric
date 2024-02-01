@@ -8,7 +8,7 @@
 #include <hsa/hsa.h>
 #include <hsa/hsa_ext_amd.h>
 
-#define MAX_GPUS	(8)
+#define MAX_GPUS	(16)
 
 /*
  * Buffer location and method of allocation
@@ -28,8 +28,8 @@ struct rocr_buf {
 	void			*base;
 	uint64_t		offset;
 	size_t			size;
-    int             dev;
-	int             type;
+    	int             	dev;
+	int             	type;
 	int			location;
 };
 
@@ -37,46 +37,46 @@ struct rocr_buf {
  * Initialize GPU devices specified in the string of comma separated numbers.
  * Returns the number of GPU device successfully initialized.
  */
-int     rocr_init(char *gpu_dev_nums, int enable_multi_gpu);
+int	rocr_init(char *gpu_dev_nums, int enable_multi_gpu);
 
 /*
  * Get the device number for the ith successfully initialized GPU.
  */
-int     rocr_get_dev_num(int i);
+int	rocr_get_dev_num(int i);
 
 /*
  * Alloctaed a buffer from specified location, on the speficied GPU if
  * applicable. The rocr_buf output is optional, can pass in NULL if the
  * information is not needed.
  */
-void    *rocr_alloc_buf(size_t page_size, size_t size, int where, int gpu,
-		      struct rocr_buf *rocr_buf);
+void	*rocr_alloc_buf(size_t page_size, size_t size, int where, int gpu,
+			struct rocr_buf *rocr_buf);
 
 /*
  * Get the dma-buf fd associated with the buffer allocated with the oneAPI L0
  * functions. Return -1 if it's not a dma-buf object.
  */
-int     rocr_get_buf_fd(void *buf);
+int	rocr_get_buf_fd(void *buf);
 
 /*
  * Show the fields of the rocr_buf structure.
  */
-void    rocr_show_buf(struct rocr_buf *buf);
+void	rocr_show_buf(struct rocr_buf *buf);
 
 /*
  * Free the buffer allocated with rocr_alloc_buf.
  */
-void    rocr_free_buf(void *buf, int where);
+void	rocr_free_buf(void *buf, int where);
 
 /*
  * Like memset(). Use oneAPI L0 to access device memory.
  */
-void    rocr_set_buf(void *buf, char c, size_t size, int location, int gpu);
+void	rocr_set_buf(void *buf, char c, size_t size, int location, int gpu);
 
 /*
  * Like memcpy(). Use oneAPI L0 to access device memory.
  */
-void    rocr_copy_buf(void *dst, void *src, size_t size, int gpu);
+void	rocr_copy_buf(void *dst, void *src, size_t size, int gpu);
 
 
 /*
