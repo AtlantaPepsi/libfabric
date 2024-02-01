@@ -5,7 +5,6 @@
 #include <unistd.h>
 #include <string.h>
 #include <errno.h>
-#include <assert.h>
 #include <arpa/inet.h>
 #include <rdma/fabric.h>
 #include <rdma/fi_domain.h>
@@ -110,7 +109,7 @@ static void init_buf(size_t buf_size, char c)
 	void *buf;
 
 	for (i = 0; i < num_gpus; i++) {
-        printf("allocating %dth gpu\n", i);
+        	printf("allocating %dth gpu\n", i);
 		buf = rocr_alloc_buf(page_size, buf_size, buf_location, i,
 				   &bufs[i].rocr_buf);
 		if (!buf) {
@@ -122,7 +121,7 @@ static void init_buf(size_t buf_size, char c)
 	}
 
 	if (buf_location == DEVICE && use_proxy) {
-        printf("uncertain of proxy ???\n");
+        	printf("uncertain of proxy ???\n");
 		if (!rocr_alloc_buf(page_size, buf_size, HOST, 0,
 				  &proxy_buf.rocr_buf)) {
 			fprintf(stderr, "Couldn't allocate proxy buf.\n");
@@ -155,7 +154,7 @@ static void check_buf(size_t size, char c, int gpu)
 			mismatches++;
 			if (mismatches < 10)
 			printf("value at [%d] is '%c'(0x%02x), expecting '%c'(0x%02x)\n",
-				i, bounce_buf[i], bounce_buf[i], c, c);
+					i, bounce_buf[i], bounce_buf[i], c, c);
 		}
 
 	free(bounce_buf);
@@ -171,15 +170,13 @@ static void free_buf(void)
 	int i;
 
 	for (i = 0; i < num_gpus; i++)
-    {
 		rocr_free_buf(bufs[i].rocr_buf.buf, bufs[i].rocr_buf.location);
-    }
 
 	if (use_proxy)
-    {
-        printf("no\n");
+	{
+        	printf("no\n");
 		rocr_free_buf(proxy_buf.rocr_buf.buf, proxy_buf.rocr_buf.location);
-    }
+	}
 
 	rocr_free_buf(sync_buf.rocr_buf.buf, sync_buf.rocr_buf.location);
 }
@@ -373,7 +370,7 @@ static int init_nic(int nic, char *domain_name, char *server_name, int port,
 		mr_attr.access = FI_REMOTE_READ | FI_REMOTE_WRITE |
 				 FI_READ | FI_WRITE | FI_SEND | FI_RECV;
 		mr_attr.requested_key = i + 1;
-        //Check these
+        	//Check these
 		//mr_attr.device.ze = rocr_get_dev_num(i);
 		EXIT_ON_ERROR(fi_mr_regattr(domain, &mr_attr, 0, &mr));
 
@@ -1213,7 +1210,7 @@ int main(int argc, char *argv[])
 
 	// multi-GPU test doesn't make sense if buffers are on the host 
 	enable_multi_gpu = buf_location != MALLOC && buf_location != HOST;
-    num_gpus = rocr_init(gpu_dev_nums, enable_multi_gpu); //num_gpus=1;
+	num_gpus = rocr_init(gpu_dev_nums, enable_multi_gpu); //num_gpus=1;
 
 	init_buf(max_size * batch, initiator ? 'A' : 'a');
 
@@ -1222,8 +1219,8 @@ int main(int argc, char *argv[])
 	sync_tcp(sockfd);
 	printf("Warming up ...\n");
 
-    printf("gpu count:%d\n", num_gpus);
-    printf("nic count:%d\n", num_nics);
+	printf("gpu count:%d\n", num_gpus);
+	printf("nic count:%d\n", num_nics);
 
 	warm_up_size = msg_size > 0 ? msg_size : 1;
 	if (initiator) {
