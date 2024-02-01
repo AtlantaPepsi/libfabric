@@ -75,7 +75,7 @@ static void init_buf(size_t buf_size, char c)
 
 	for (i = 0; i < num_gpus; i++) {
 		buf = rocr_alloc_buf(page_size, buf_size, buf_location, i,
-				   &bufs[i].rocr_buf);
+				     &bufs[i].rocr_buf);
 		if (!buf) {
 			fprintf(stderr, "Couldn't allocate work buf.\n");
 			exit(-1);
@@ -212,9 +212,9 @@ static void free_ib(void)
 static struct ibv_mr *reg_mr(struct ibv_pd *pd, void *buf, uint64_t size,
 			     void *base, int where)
 {
-    struct ibv_mr *mr;
-    size_t offset = -1;
-    int buf_fd = -1;
+	struct ibv_mr *mr;
+	size_t offset = -1;
+	int buf_fd = -1;
 	int mr_access_flags = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ |
 			      IBV_ACCESS_REMOTE_WRITE;
 	int odp_flag = use_odp ? IBV_ACCESS_ON_DEMAND : 0;
@@ -223,18 +223,17 @@ static struct ibv_mr *reg_mr(struct ibv_pd *pd, void *buf, uint64_t size,
 		printf("Calling ibv_reg_mr(buf=%p, size=%zd)\n", buf, size);
 		CHECK_NULL((mr = ibv_reg_mr(pd, buf, size, mr_access_flags | odp_flag)));
 	} else {
-        hsa_amd_portable_export_dmabuf(buf, size, &buf_fd, &offset);
-        printf("Calling ibv_reg_dmabuf_mr(buf=%p, size=%zd, fd=%d, offset=%zu)\n",
-            buf, size, buf_fd);
-	    CHECK_NULL((mr = ibv_reg_dmabuf_mr(pd,
-                     offset,
-					 size, (uint64_t)buf, /* iova */
-					 buf_fd, mr_access_flags)));
-    }
-    return mr;
+        	hsa_amd_portable_export_dmabuf(buf, size, &buf_fd, &offset);
+        	printf("Calling ibv_reg_dmabuf_mr(buf=%p, size=%zd, fd=%d, offset=%zu)\n",
+            		buf, size, buf_fd);
+	    	CHECK_NULL((mr = ibv_reg_dmabuf_mr(pd, offset,
+					 	   size, (uint64_t)buf, /* iova */
+					 	   buf_fd, mr_access_flags)));
+	}
+	return mr;
 err_out:
-    printf("dmabuf_reg failed\n");
-    return -1;
+	printf("dmabuf_reg failed\n");
+	return -1;
 }
 
 static int init_nic(int nic, char *ibdev_name, int ib_port)
