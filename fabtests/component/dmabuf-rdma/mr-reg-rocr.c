@@ -20,19 +20,19 @@ static int	buf_location = MALLOC;
 
 static void init_buf(void)
 {
-    int page_size = sysconf(_SC_PAGESIZE);
+	int page_size = sysconf(_SC_PAGESIZE);
 
-    buf = rocr_alloc_buf(page_size, buf_size, buf_location, 0, NULL);
-    if (!buf)
-    {
-        printf("cannot allocate buffer\n");
-        exit(-1);
-    }
+	buf = rocr_alloc_buf(page_size, buf_size, buf_location, 0, NULL);
+	if (!buf)
+	{
+        	printf("cannot allocate buffer\n");
+        	exit(-1);
+    	}
 }
 
 static void free_buf(void)
 {
-    rocr_free_buf(buf, buf_location);
+    	rocr_free_buf(buf, buf_location);
 }
 
 static void free_ib(void)
@@ -67,24 +67,23 @@ err_out:
 
 static int reg_mr(void)
 {
-    size_t offset = -1;
+    	size_t offset = -1;
 	int mr_access_flags = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ |
 			      IBV_ACCESS_REMOTE_WRITE;
 
-    //buf_fd = rocr_get_buf_fd(buf);
-    if (use_dmabuf_reg || buf_location == MALLOC) {
-        printf("Calling ibv_reg_mr(buf=%p, size=%zd)\n", buf, buf_size);
-        CHECK_NULL((mr = ibv_reg_mr(pd, buf, buf_size, mr_access_flags)));
-    } else {
-        hsa_amd_portable_export_dmabuf(buf, buf_size, &buf_fd, &offset);
-	    printf("Calling ibv_reg_dmabuf_mr(buf=%p, size=%zd, fd=%d, offset=%zu)\n",
-	 	    buf, buf_size, buf_fd);
-	    CHECK_NULL((mr = ibv_reg_dmabuf_mr(pd, offset, buf_size,
-					       (uint64_t)buf, buf_fd,
-					       mr_access_flags)));
-    }
+    	//buf_fd = rocr_get_buf_fd(buf);
+    	if (use_dmabuf_reg || buf_location == MALLOC) {
+        	printf("Calling ibv_reg_mr(buf=%p, size=%zd)\n", buf, buf_size);
+        	CHECK_NULL((mr = ibv_reg_mr(pd, buf, buf_size, mr_access_flags)));
+    	} else {
+        	hsa_amd_portable_export_dmabuf(buf, buf_size, &buf_fd, &offset);
+	    	printf("Calling ibv_reg_dmabuf_mr(buf=%p, size=%zd, fd=%d, offset=%zu)\n",
+	 		buf, buf_size, buf_fd);
+	    	CHECK_NULL((mr = ibv_reg_dmabuf_mr(pd, offset, buf_size,
+						   (uint64_t)buf, buf_fd,
+						   mr_access_flags)));
+    	}
 	
-
 	printf("%s: mr %p\n", __func__, mr);
 	return 0;
 
@@ -114,53 +113,52 @@ int main(int argc, char *argv[])
 	char *gpu_dev_nums = NULL;
 	int c;
 
-    while ((c = getopt(argc, argv, "d:m:RS:h")) != -1) {
-        switch (c) {
-        case 'd':
-            gpu_dev_nums = strdup(optarg);
-            break;
-        case 'm':
-            if (strcasecmp(optarg, "malloc") == 0)
-                buf_location = MALLOC ;
-            else if (strcasecmp(optarg, "host") == 0)
-                buf_location = HOST;
-            else if (strcasecmp(optarg, "device") == 0)
-                buf_location = DEVICE;
-            else if (strcasecmp(optarg, "shared") == 0)
-                buf_location = SHARED;
-            break;
-        case 'R':
-            use_dmabuf_reg = 1;
-            break;
-        case 'S':
-            buf_size = atol(optarg);
-            break;
-        default:
-            usage(argv[0]);
-            exit(-1);
-            break;
-        }
-    }
+    	while ((c = getopt(argc, argv, "d:m:RS:h")) != -1) {
+        	switch (c) {
+        	case 'd':
+            		gpu_dev_nums = strdup(optarg);
+            		break;
+        	case 'm':
+            		if (strcasecmp(optarg, "malloc") == 0)
+                		buf_location = MALLOC ;
+            		else if (strcasecmp(optarg, "host") == 0)
+                		buf_location = HOST;
+	            	else if (strcasecmp(optarg, "device") == 0)
+	                	buf_location = DEVICE;
+	            	else if (strcasecmp(optarg, "shared") == 0)
+	                	buf_location = SHARED;
+            		break;
+        	case 'R':
+            		use_dmabuf_reg = 1;
+            		break;
+       		case 'S':
+           		buf_size = atol(optarg);
+            		break;
+        	default:
+            		usage(argv[0]);
+            		exit(-1);
+            		break;
+        	}
+    	}
 
-    use_dmabuf_reg = 0;
+    	use_dmabuf_reg = 0;
 
 	if (use_dmabuf_reg)
 		dmabuf_reg_open();
 
-    if (buf_location != MALLOC)
-        rocr_init(gpu_dev_nums, 0);
+    	if (buf_location != MALLOC)
+        	rocr_init(gpu_dev_nums, 0);
 
-    init_buf();
-    init_ib();
-    reg_mr();
+    	init_buf();
+    	init_ib();
+    	reg_mr();
 
-    dereg_mr();
-    free_ib();
-    free_buf();
+    	dereg_mr();
+    	free_ib();
+    	free_buf();
 
-    if (use_dmabuf_reg)
-        dmabuf_reg_close();
-
+    	if (use_dmabuf_reg)
+        	dmabuf_reg_close();
 
 	return 0;
 }
