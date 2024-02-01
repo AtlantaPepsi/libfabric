@@ -193,7 +193,7 @@ int main(int argc, char *argv[])
 	char *gpu_dev_nums = NULL;
 	int c;
 
-use_dmabuf_reg = 0;
+	use_dmabuf_reg = 0;
 	while ((c = getopt(argc, argv, "d:D:e:p:m:RS:h")) != -1) {
 		switch (c) {
 		case 'd':
@@ -256,8 +256,8 @@ use_dmabuf_reg = 0;
 	finalize_ofi();
 	free_buf();
 
-//	if (use_dmabuf_reg)
-//		dmabuf_reg_close();
+	if (use_dmabuf_reg)
+		dmabuf_reg_close();
 
 	return 0;
 }
