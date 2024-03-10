@@ -517,7 +517,7 @@ static int ft_alloc_ctx_array(struct ft_context **mr_array, char ***mr_bufs,
 
 	if (opts.options & FT_OPT_ALLOC_MULT_MR) {
 		*mr_bufs = calloc(opts.window_size, sizeof(**mr_bufs));
-		if (!mr_bufs)
+		if (!*mr_bufs)
 			return -FI_ENOMEM;
 	}
 
@@ -749,7 +749,8 @@ int ft_open_fabric_res(void)
 int ft_alloc_ep_res(struct fi_info *fi, struct fid_cq **new_txcq,
 		    struct fid_cq **new_rxcq, struct fid_cntr **new_txcntr,
 		    struct fid_cntr **new_rxcntr,
-		    struct fid_cntr **new_rma_cntr)
+		    struct fid_cntr **new_rma_cntr,
+		    struct fid_av **new_av)
 {
 	int ret;
 
@@ -834,7 +835,7 @@ int ft_alloc_ep_res(struct fi_info *fi, struct fid_cq **new_txcq,
 		}
 	}
 
-	if (!av && (fi->ep_attr->type == FI_EP_RDM || fi->ep_attr->type == FI_EP_DGRAM)) {
+	if (!*new_av && (fi->ep_attr->type == FI_EP_RDM || fi->ep_attr->type == FI_EP_DGRAM)) {
 		if (fi->domain_attr->av_type != FI_AV_UNSPEC)
 			av_attr.type = fi->domain_attr->av_type;
 
@@ -842,7 +843,7 @@ int ft_alloc_ep_res(struct fi_info *fi, struct fid_cq **new_txcq,
 			av_attr.name = opts.av_name;
 		}
 		av_attr.count = opts.av_size;
-		ret = fi_av_open(domain, &av_attr, &av, NULL);
+		ret = fi_av_open(domain, &av_attr, new_av, NULL);
 		if (ret) {
 			FT_PRINTERR("fi_av_open", ret);
 			return ret;
@@ -854,7 +855,7 @@ int ft_alloc_ep_res(struct fi_info *fi, struct fid_cq **new_txcq,
 int ft_alloc_active_res(struct fi_info *fi)
 {
 	int ret;
-	ret = ft_alloc_ep_res(fi, &txcq, &rxcq, &txcntr, &rxcntr, &rma_cntr);
+	ret = ft_alloc_ep_res(fi, &txcq, &rxcq, &txcntr, &rxcntr, &rma_cntr, &av);
 	if (ret)
 		return ret;
 
@@ -882,7 +883,10 @@ int ft_init(void)
 		return ret;
 	}
 
-	return ft_hmem_init(opts.iface);
+	ret = ft_hmem_init(opts.iface);
+	if (ret)
+		FT_PRINTERR("ft_hmem_init", ret);
+	return ret;
 }
 
 int ft_sock_setup(int sock)
@@ -2061,9 +2065,9 @@ void init_test(struct ft_opts *opts, char *test_name, size_t test_name_len)
 void ft_force_progress(void)
 {
 	if (txcq)
-		fi_cq_read(txcq, NULL, 0);
+		(void) fi_cq_read(txcq, NULL, 0);
 	if (rxcq)
-		fi_cq_read(rxcq, NULL, 0);
+		(void) fi_cq_read(rxcq, NULL, 0);
 }
 
 int ft_progress(struct fid_cq *cq, uint64_t total, uint64_t *cq_cntr)
@@ -2761,16 +2765,33 @@ int ft_get_tx_comp(uint64_t total)
 	return ret;
 }
 
+int ft_tx_msg(struct fid_ep *ep, fi_addr_t fi_addr, size_t size, void *ctx, uint64_t flags)
+{
+	int ret;
+
+	if (ft_check_opts(FT_OPT_VERIFY_DATA | FT_OPT_ACTIVE)) {
+		ret = ft_fill_buf((char *) tx_buf + ft_tx_prefix_size(), size);
+		if (ret)
+			return ret;
+	}
+
+	ret = ft_sendmsg(ep, fi_addr, size, ctx, flags);
+	if (ret)
+		return ret;
+
+	ret = ft_get_tx_comp(tx_seq);
+	return ret;
+}
+
 int ft_sendmsg(struct fid_ep *ep, fi_addr_t fi_addr,
 		size_t size, void *ctx, int flags)
 {
-	int ret;
 	struct fi_msg msg;
 	struct fi_msg_tagged tagged_msg;
 	struct iovec msg_iov;
 
 	msg_iov.iov_base = tx_buf;
-	msg_iov.iov_len = size;
+	msg_iov.iov_len = size + ft_tx_prefix_size();
 
 	if (hints->caps & FI_TAGGED) {
 		tagged_msg.msg_iov = &msg_iov;
@@ -2782,11 +2803,9 @@ int ft_sendmsg(struct fid_ep *ep, fi_addr_t fi_addr,
 		tagged_msg.tag = ft_tag ? ft_tag : tx_seq;
 		tagged_msg.ignore = 0;
 
-		ret = fi_tsendmsg(ep, &tagged_msg, flags);
-		if (ret) {
-			FT_PRINTERR("fi_tsendmsg", ret);
-			return ret;
-		}
+		FT_POST(fi_tsendmsg, ft_progress, txcq, tx_seq,
+			&tx_cq_cntr, "tsendmsg", ep, &tagged_msg,
+			flags);
 	} else {
 		msg.msg_iov = &msg_iov;
 		msg.desc = &mr_desc;
@@ -2795,15 +2814,14 @@ int ft_sendmsg(struct fid_ep *ep, fi_addr_t fi_addr,
 		msg.data = NO_CQ_DATA;
 		msg.context = ctx;
 
-		ret = fi_sendmsg(ep, &msg, flags);
-		if (ret) {
-			FT_PRINTERR("fi_sendmsg", ret);
-			return ret;
-		}
+		FT_POST(fi_sendmsg, ft_progress, txcq, tx_seq,
+			&tx_cq_cntr, "sendmsg", ep, &msg,
+			flags);
 	}
 
 	return 0;
 }
+
 
 int ft_recvmsg(struct fid_ep *ep, fi_addr_t fi_addr,
 	       size_t size, void *ctx, int flags)
@@ -2826,11 +2844,9 @@ int ft_recvmsg(struct fid_ep *ep, fi_addr_t fi_addr,
 		tagged_msg.tag = ft_tag ? ft_tag : tx_seq;
 		tagged_msg.ignore = 0;
 
-		ret = fi_trecvmsg(ep, &tagged_msg, flags);
-		if (ret) {
-			FT_PRINTERR("fi_trecvmsg", ret);
-			return ret;
-		}
+		FT_POST(fi_trecvmsg, ft_progress, rxcq, rx_seq,
+			&rx_cq_cntr, "trecvmsg", ep, &tagged_msg,
+			flags);
 	} else {
 		msg.msg_iov = &msg_iov;
 		msg.desc = &mr_desc;
@@ -2839,11 +2855,9 @@ int ft_recvmsg(struct fid_ep *ep, fi_addr_t fi_addr,
 		msg.data = NO_CQ_DATA;
 		msg.context = ctx;
 
-		ret = fi_recvmsg(ep, &msg, flags);
-		if (ret) {
-			FT_PRINTERR("fi_recvmsg", ret);
-			return ret;
-		}
+		FT_POST(fi_recvmsg, ft_progress, rxcq, rx_seq,
+			&rx_cq_cntr, "recvmsg", ep, &msg,
+			flags);
 	}
 
 	return 0;
@@ -2910,12 +2924,12 @@ void eq_readerr(struct fid_eq *eq, const char *eq_str)
 
 int ft_sync()
 {
-	char buf;
+	char buf = 'a';
 	int ret;
 
 	if (opts.dst_addr) {
 		if (!(opts.options & FT_OPT_OOB_SYNC)) {
-			ret = ft_tx(ep, remote_fi_addr, 1, &tx_ctx);
+			ret = ft_tx_msg(ep, remote_fi_addr, 1, &tx_ctx, FI_DELIVERY_COMPLETE);
 			if (ret)
 				return ret;
 
@@ -2935,7 +2949,9 @@ int ft_sync()
 			if (ret)
 				return ret;
 
-			ret = ft_tx(ep, remote_fi_addr, 1, &tx_ctx);
+			ret = ft_tx_msg(ep, remote_fi_addr, 1, &tx_ctx, FI_DELIVERY_COMPLETE);
+			if (ret)
+				return ret;
 		} else {
 			ret = ft_sock_recv(oob_sock, &buf, 1);
 			if (ret)
@@ -3049,42 +3065,12 @@ int ft_wait_child(void)
 
 int ft_finalize_ep(struct fid_ep *ep)
 {
-	struct iovec iov;
 	int ret;
 	struct fi_context ctx;
 
-	iov.iov_base = tx_buf;
-	iov.iov_len = 4 + ft_tx_prefix_size();
-
-	if (hints->caps & FI_TAGGED) {
-		struct fi_msg_tagged tmsg;
-
-		memset(&tmsg, 0, sizeof tmsg);
-		tmsg.msg_iov = &iov;
-		tmsg.desc = &mr_desc;
-		tmsg.iov_count = 1;
-		tmsg.addr = remote_fi_addr;
-		tmsg.tag = tx_seq;
-		tmsg.ignore = 0;
-		tmsg.context = &ctx;
-
-		FT_POST(fi_tsendmsg, ft_progress, txcq, tx_seq,
-			&tx_cq_cntr, "tsendmsg", ep, &tmsg,
-			FI_TRANSMIT_COMPLETE);
-	} else {
-		struct fi_msg msg;
-
-		memset(&msg, 0, sizeof msg);
-		msg.msg_iov = &iov;
-		msg.desc = &mr_desc;
-		msg.iov_count = 1;
-		msg.addr = remote_fi_addr;
-		msg.context = &ctx;
-
-		FT_POST(fi_sendmsg, ft_progress, txcq, tx_seq,
-			&tx_cq_cntr, "sendmsg", ep, &msg,
-			FI_TRANSMIT_COMPLETE);
-	}
+	ret = ft_sendmsg(ep, remote_fi_addr, 4, &ctx, FI_TRANSMIT_COMPLETE);
+	if (ret)
+		return ret;
 
 	ret = ft_get_tx_comp(tx_seq);
 	if (ret)
@@ -3461,6 +3447,7 @@ void ft_parse_opts_list(char* optarg)
 {
 	int i, ret;
 	char *token;
+	char *saveptr;
 
 	optarg += 2; // remove 'l:'
 	test_cnt = 1;
@@ -3473,7 +3460,7 @@ void ft_parse_opts_list(char* optarg)
 		exit(EXIT_FAILURE);
 	}
 
-	token = strtok(optarg, ",");
+	token = strtok_r(optarg, ",", &saveptr);
 	test_cnt = 0;
 	while (token != NULL) {
 		ret = sscanf(token, "%zu", &user_test_sizes[test_cnt].size);
@@ -3482,7 +3469,7 @@ void ft_parse_opts_list(char* optarg)
 			exit(EXIT_FAILURE);
 		}
 		test_cnt++;
-		token = strtok(NULL, ",");
+		token = strtok_r(NULL, ",", &saveptr);
 	}
 	test_size = user_test_sizes;
 }
@@ -3921,13 +3908,32 @@ int ft_sock_recv(int fd, void *msg, size_t len)
 int ft_sock_sync(int value)
 {
 	int result = -FI_EOTHER;
+	int ret;
 
 	if (listen_sock < 0) {
-		ft_sock_send(sock, &value,  sizeof value);
-		ft_sock_recv(sock, &result, sizeof result);
+		ret = ft_sock_send(sock, &value,  sizeof value);
+		if (ret) {
+			FT_PRINTERR("ft_sock_send", ret);
+			return ret;
+		}
+
+		ret = ft_sock_recv(sock, &result, sizeof result);
+		if (ret) {
+			FT_PRINTERR("ft_sock_recv", ret);
+			return ret;
+		}
 	} else {
-		ft_sock_recv(sock, &result, sizeof result);
-		ft_sock_send(sock, &value,  sizeof value);
+		ret = ft_sock_recv(sock, &result, sizeof result);
+		if (ret) {
+			FT_PRINTERR("ft_sock_recv", ret);
+			return ret;
+		}
+
+		ret = ft_sock_send(sock, &value,  sizeof value);
+		if (ret) {
+			FT_PRINTERR("ft_sock_send", ret);
+			return ret;
+		}
 	}
 
 	return result;
@@ -4132,6 +4138,10 @@ void ft_longopts_usage()
 	FT_PRINT_OPTS_USAGE("--debug-assert",
 		"Replace asserts with while loops to force process to\n"
 		"spin until a debugger can be attached.");
+	FT_PRINT_OPTS_USAGE("--data-progress <progress_model>",
+		"manual, or auto");
+	FT_PRINT_OPTS_USAGE("--control-progress <progress_model>",
+		"manual, auto, or unified");
 }
 
 int debug_assert;
@@ -4141,8 +4151,24 @@ struct option long_opts[] = {
 	{"pin-core", required_argument, NULL, LONG_OPT_PIN_CORE},
 	{"timeout", required_argument, NULL, LONG_OPT_TIMEOUT},
 	{"debug-assert", no_argument, &debug_assert, LONG_OPT_DEBUG_ASSERT},
+	{"data-progress", required_argument, NULL, LONG_OPT_DATA_PROGRESS},
+	{"control-progress", required_argument, NULL, LONG_OPT_CONTROL_PROGRESS},
 	{NULL, 0, NULL, 0},
 };
+
+int ft_parse_progress_model_string(char* progress_str)
+{
+	int ret = -1;
+
+	if (!strcasecmp("manual", progress_str))
+		ret = FI_PROGRESS_MANUAL;
+	else if (!strcasecmp("auto", progress_str))
+		ret = FI_PROGRESS_AUTO;
+	else if (!strcasecmp("unified", progress_str))
+		ret = FI_PROGRESS_CONTROL_UNIFIED;
+
+	return ret;
+}
 
 int ft_parse_long_opts(int op, char *optarg)
 {
@@ -4153,6 +4179,16 @@ int ft_parse_long_opts(int op, char *optarg)
 		timeout = atoi(optarg);
 		return 0;
 	case LONG_OPT_DEBUG_ASSERT:
+		return 0;
+	case LONG_OPT_DATA_PROGRESS:
+		hints->domain_attr->data_progress = ft_parse_progress_model_string(optarg);
+		if (hints->domain_attr->data_progress == -1)
+			return EXIT_FAILURE;
+		return 0;
+	case LONG_OPT_CONTROL_PROGRESS:
+		hints->domain_attr->control_progress = ft_parse_progress_model_string(optarg);
+		if (hints->domain_attr->control_progress == -1)
+			return EXIT_FAILURE;
 		return 0;
 	default:
 		return EXIT_FAILURE;

@@ -432,7 +432,8 @@ int ft_connect_ep(struct fid_ep *ep,
 int ft_alloc_ep_res(struct fi_info *fi, struct fid_cq **new_txcq,
 		    struct fid_cq **new_rxcq, struct fid_cntr **new_txcntr,
 		    struct fid_cntr **new_rxcntr,
-		    struct fid_cntr **new_rma_cntr);
+		    struct fid_cntr **new_rma_cntr,
+		    struct fid_av **new_av);
 int ft_alloc_msgs(void);
 int ft_alloc_host_tx_buf(size_t size);
 void ft_free_host_tx_buf(void);
@@ -599,6 +600,8 @@ int ft_recvmsg(struct fid_ep *ep, fi_addr_t fi_addr,
 		size_t size, void *ctx, int flags);
 int ft_sendmsg(struct fid_ep *ep, fi_addr_t fi_addr,
 		size_t size, void *ctx, int flags);
+int ft_tx_msg(struct fid_ep *ep, fi_addr_t fi_addr,
+	      size_t size, void *ctx, uint64_t flags);
 int ft_cq_read_verify(struct fid_cq *cq, void *op_context);
 
 void eq_readerr(struct fid_eq *eq, const char *eq_str);
@@ -632,6 +635,8 @@ enum {
 	LONG_OPT_PIN_CORE = 1,
 	LONG_OPT_TIMEOUT,
 	LONG_OPT_DEBUG_ASSERT,
+	LONG_OPT_DATA_PROGRESS,
+	LONG_OPT_CONTROL_PROGRESS,
 };
 
 extern int debug_assert;

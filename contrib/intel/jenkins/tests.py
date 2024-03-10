@@ -15,12 +15,13 @@ import time
 # it is building for. for e.g. in our case jobname = 'ofi_libfabric/master'
 class Test:
 
-    def __init__ (self, jobname, buildno, testname, core_prov, fabric,
+    def __init__ (self, jobname, buildno, testname, hw, core_prov, fabric,
                   hosts, ofi_build_mode, user_env, log_file, mpitype=None,
                   util_prov=None, way=None):
         self.jobname = jobname
         self.buildno = buildno
         self.testname = testname
+        self.hw = hw
         self.core_prov = core_prov
         self.util_prov = f'ofi_{util_prov}' if util_prov != None else ''
         self.fabric = fabric
@@ -36,18 +37,12 @@ class Test:
             self.client = hosts[1]
 
         self.nw_interface = cloudbees_config.interface_map[self.fabric]
-        self.libfab_installpath = f'{cloudbees_config.install_dir}/'\
-                                  f'{self.jobname}/{self.buildno}/'\
-                                  f'{self.ofi_build_mode}'
-        if (self.core_prov == 'ucx'):
-            self.libfab_installpath += "/ucx"
+        self.custom_workspace = os.environ['CUSTOM_WORKSPACE']
+        self.libfab_installpath = f'{self.custom_workspace}/'\
+                                  f'{self.hw}/{self.ofi_build_mode}'
 
-        self.middlewares_path = f'{cloudbees_config.install_dir}/'\
-                                   f'{self.jobname}/{self.buildno}/'\
-                                   'middlewares'
-        self.ci_logdir_path = f'{cloudbees_config.install_dir}/'\
-                                   f'{self.jobname}/{self.buildno}/'\
-                                   'log_dir'
+        self.middlewares_path = f'{self.custom_workspace}/middlewares'
+        self.ci_logdir_path = f'{self.custom_workspace}/log_dir'
         self.env = user_env
         self.way = way
 
@@ -63,7 +58,7 @@ class Test:
                              self.server, self.client, self.env,
                              self.middlewares_path, self.util_prov)
         elif (self.mpi_type == 'mpich'):
-            self.mpi = MPICH(self.core_prov, self.hosts,
+            self.mpi = MPICH(self.hw, self.core_prov, self.hosts,
                              self.libfab_installpath, self.nw_interface,
                              self.server, self.client, self.env,
                              self.middlewares_path, self.util_prov)
@@ -71,10 +66,10 @@ class Test:
 
 class FiInfoTest(Test):
 
-    def __init__(self, jobname, buildno, testname, core_prov, fabric,
+    def __init__(self, jobname, buildno, testname, hw, core_prov, fabric,
                  hosts, ofi_build_mode, user_env, log_file, util_prov=None):
 
-        super().__init__(jobname, buildno, testname, core_prov, fabric,
+        super().__init__(jobname, buildno, testname, hw, core_prov, fabric,
                      hosts, ofi_build_mode, user_env, log_file, None, util_prov)
 
         self.fi_info_testpath =  f'{self.libfab_installpath}/bin'
@@ -102,11 +97,11 @@ class FiInfoTest(Test):
 
 class Fabtest(Test):
 
-    def __init__(self, jobname, buildno, testname, core_prov, fabric,
+    def __init__(self, jobname, buildno, testname, hw, core_prov, fabric,
                  hosts, ofi_build_mode, user_env, log_file, util_prov=None,
                  way=None):
 
-        super().__init__(jobname, buildno, testname, core_prov, fabric,
+        super().__init__(jobname, buildno, testname, hw, core_prov, fabric,
                          hosts, ofi_build_mode, user_env, log_file, None,
                          util_prov, way)
         self.fabtestpath = f'{self.libfab_installpath}/bin'
@@ -116,13 +111,16 @@ class Fabtest(Test):
         path = self.libfab_installpath
         efile_path = f'{path}/share/fabtests/test_configs'
 
-        prov = self.util_prov if self.util_prov else self.core_prov
-        efile_old = f'{efile_path}/{prov}/{prov}.exclude'
-
-        if self.util_prov:
-            efile = f'{efile_path}/{self.util_prov}/{self.core_prov}/exclude'
+        if self.hw == 'ivysaur':
+            efile = f'{efile_path}/{self.core_prov}/io_uring.exclude'
         else:
-            efile = f'{efile_path}/{self.core_prov}/exclude'
+            prov = self.util_prov if self.util_prov else self.core_prov
+            efile_old = f'{efile_path}/{prov}/{prov}.exclude'
+
+            if self.util_prov:
+                efile = f'{efile_path}/{self.util_prov}/{self.core_prov}/exclude'
+            else:
+                efile = f'{efile_path}/{self.core_prov}/exclude'
 
         if os.path.isfile(efile):
             return efile
@@ -157,11 +155,11 @@ class Fabtest(Test):
             opts += "-t all "
 
         if (self.way == 'h2d'):
-            opts += "-C \"-H\" -L \"-D ze\" "
+            opts += f"-C \"-H\" -L \"-D {self.hw}\" "
         elif (self.way == 'd2d'):
-            opts += "-C \"-D ze\" -L \"-D ze\" "
+            opts += f"-C \"-D {self.hw}\" -L \"-D {self.hw}\" "
         elif (self.way == 'xd2d'):
-            opts += "-C \"-D ze\" -L \"-D ze -i 1\" "
+            opts += f"-C \"-D {self.hw}\" -L \"-D {self.hw} -i 1\" "
 
         if (self.core_prov == 'sockets' and self.ofi_build_mode == 'reg'):
             complex_test_file = f'{self.libfab_installpath}/share/fabtests/'\
@@ -209,16 +207,19 @@ class Fabtest(Test):
 
 class ShmemTest(Test):
 
-    def __init__(self, jobname, buildno, testname, core_prov, fabric,
-                    hosts, ofi_build_mode, user_env, log_file, util_prov=None):
+    def __init__(self, jobname, buildno, testname, hw, core_prov, fabric,
+                    hosts, ofi_build_mode, user_env, log_file, util_prov=None,
+                    weekly=False):
 
-        super().__init__(jobname, buildno, testname, core_prov, fabric,
+        super().__init__(jobname, buildno, testname, hw, core_prov, fabric,
                          hosts, ofi_build_mode, user_env, log_file, None,
                          util_prov)
 
-        self.n = 4
-        self.ppn = 2
-        self.shmem_dir = f'{self.middlewares_path}/shmem'
+        self.n = 2
+        self.ppn = 1
+        self.weekly = weekly
+        self.shmem_dir = f'{self.middlewares_path}/shmem_{self.hw}'
+        self.oshrun = f'{self.shmem_dir}/bin/oshrun'
         self.hydra = f'{cloudbees_config.hydra}'
         self.shmem_testname = ''
         self.threshold = '1'
@@ -228,22 +229,14 @@ class ShmemTest(Test):
         self.prk_first_arr_dim = 1000
         self.prk_second_arr_dim = 1000
         if self.util_prov:
-            self.prov = f'{self.core_prov};{self.util_prov}'
+            self.prov = f'{self.core_prov}\\;{self.util_prov}'
         else:
             self.prov = self.core_prov
 
         self.test_dir = {
-            'unit'  : 'SOS',
-            'uh'    : 'tests-uh',
+            'sos'  : 'SOS/test',
             'isx'   : 'ISx/SHMEM',
             'prk'   : 'PRK/SHMEM'
-        }
-
-        self.make = {
-            'unit'  : 'make VERBOSE=1',
-            'uh'    : 'make C_feature_tests-run',
-            'isx'   : '',
-            'prk'   : ''
         }
 
         self.shmem_environ = {
@@ -255,7 +248,39 @@ class ShmemTest(Test):
             'SHMEM_SYMMETRIC_SIZE'	: '4G',
             'LD_PRELOAD'			: f'{self.libfab_installpath}'\
                                        '/lib/libfabric.so',
-            'threshold'              : self.threshold
+            'threshold'             : self.threshold,
+            'SHMEM_DEBUG'           : '1'
+        }
+
+        self.exclude_extensions = ['.cpp', '.c', '.o', '.h', '.f90', '.log',
+                                   '.am', '.in', '.deps', '.libs']
+
+        self.SOS_tests = [
+            'unit',
+            'shmemx',
+            'apps',
+            'spec-example'
+        ]
+
+        if self.weekly:
+            self.SOS_tests.append('performance/shmem_perf_suite')
+            self.SOS_tests.append('performance/tests')
+
+        self.exclude = {
+            'sos'  : {
+                        'verbs'   : [
+                                        'makefile',
+                                        'readme'
+                                   ],
+                        'tcp'     : [
+                                        'makefile',
+                                        'readme'
+                                    ],
+                        'sockets' : [
+                                        'makefile',
+                                        'readme'
+                                    ]
+                     }
         }
 
     def export_env(self):
@@ -267,57 +292,74 @@ class ShmemTest(Test):
             environ += f"export {key}={val}; "
         return environ
 
-    def cmd(self):
-        cmd = ''
-        if self.shmem_testname == 'unit':
-            cmd += f"{self.make[self.shmem_testname]} "
-            cmd += "mpiexec.hydra "
-            cmd += f"-n {self.n} "
-            cmd += f"-np {self.ppn} "
-            cmd += 'check'
-        elif self.shmem_testname == 'uh':
-            cmd += f'{self.make[self.shmem_testname]}'
+    def check_ending(self, f_name):
+        """
+        Returns True if ending is okay, false if not
+        """
+        for ext in self.exclude_extensions:
+            if f_name.lower().endswith(ext):
+                return False
+
+        return True
+
+    def get_cmds(self):
+        cmd_list = []
+        if self.shmem_testname == 'sos':
+            for test_dir in self.SOS_tests:
+                test_dir_path = f'{self.shmem_dir}/' \
+                                f'{self.test_dir[self.shmem_testname]}/' \
+                                f'{test_dir}'
+                for f_name in os.listdir(test_dir_path):
+                    if not self.check_ending(f_name) or \
+                       f_name.lower() in \
+                       self.exclude[self.shmem_testname][self.core_prov]:
+                        continue
+
+                    cmd_list.append(f"{test_dir_path}/{f_name}")
+
         elif self.shmem_testname == 'isx':
-            cmd += f"oshrun -np 4 ./bin/isx.strong {self.isx_shmem_kernel_max}"\
-                    " output_strong; "
-            cmd += f"oshrun -np 4 ./bin/isx.weak {self.isx_shmem_total_size} "\
-                    "output_weak; "
-            cmd += f"oshrun -np 4 ./bin/isx.weak_iso "\
-                   f"{self.isx_shmem_total_size} output_weak_iso "
+            exec_path = f'{self.shmem_dir}/{self.test_dir[self.shmem_testname]}/bin'
+            cmd_list.append(f"{exec_path}/isx.strong {self.isx_shmem_kernel_max} " \
+                        "output_strong")
+            cmd_list.append(f"{exec_path}/isx.weak " \
+                       f"{self.isx_shmem_total_size} output_weak")
+            cmd_list.append(f"{exec_path}/isx.weak_iso " \
+                       f"{self.isx_shmem_total_size} output_weak_iso")
         elif self.shmem_testname == 'prk':
-            cmd += f"oshrun -np 4 ./Stencil/stencil {self.prk_iterations} "\
-                   f"{self.prk_first_arr_dim}; "
-            cmd += f"oshrun -np 4 ./Synch_p2p/p2p {self.prk_iterations} "\
-                   f"{self.prk_first_arr_dim} {self.prk_second_arr_dim}; "
-            cmd += f"oshrun -np 4 ./Transpose/transpose {self.prk_iterations} "\
-                   f"{self.prk_first_arr_dim} "
+            exec_path = f'{self.shmem_dir}/{self.test_dir[self.shmem_testname]}'
+            cmd_list.append(f"{exec_path}/Stencil/stencil " \
+                       f"{self.prk_iterations} {self.prk_first_arr_dim}")
+            cmd_list.append(f"{exec_path}/Synch_p2p/p2p " \
+                       f"{self.prk_iterations} {self.prk_first_arr_dim} "\
+                       f"{self.prk_second_arr_dim}")
+            cmd_list.append(f"{exec_path}/Transpose/transpose " \
+                       f"{self.prk_iterations} {self.prk_first_arr_dim}")
 
-        return cmd
-
+        return cmd_list
 
     @property
     def execute_condn(self):
-        #make always true when verbs and sockets are passing
-        return True if (self.core_prov == 'tcp') \
-                    else False
+        return True
 
     def execute_cmd(self, shmem_testname):
         self.shmem_testname = shmem_testname
-        cwd = os.getcwd()
-        os.chdir(f'{self.shmem_dir}/{self.test_dir[self.shmem_testname]}')
-        print("Changed directory to "\
-              f'{self.shmem_dir}/{self.test_dir[self.shmem_testname]}')
-        command = f"bash -c \'{self.export_env()} {self.cmd()}\'"
-        outputcmd = shlex.split(command)
-        common.run_command(outputcmd)
-        os.chdir(cwd)
+        base_cmd = f"{self.oshrun}"
+        base_cmd = f"{base_cmd} -n {self.n}"
+        base_cmd = f"{base_cmd} -ppn {self.ppn}"
+        cmds = self.get_cmds()
+        for cmd in self.get_cmds():
+            command = f"bash -c \'{self.export_env()} {base_cmd} {cmd}\'"
+            outputcmd = shlex.split(command)
+            print(f"Running {self.shmem_testname} {cmd.split('/')[-1]}")
+            common.run_command(outputcmd)
+            print(f"{self.shmem_testname} {cmd.split('/')[-1]} PASS!")
 
 class MultinodeTests(Test):
 
-    def __init__(self, jobname, buildno, testname, core_prov, fabric,
+    def __init__(self, jobname, buildno, testname, hw, core_prov, fabric,
                  hosts, ofi_build_mode, user_env, log_file, util_prov=None):
 
-        super().__init__(jobname, buildno, testname, core_prov, fabric,
+        super().__init__(jobname, buildno, testname, hw, core_prov, fabric,
                          hosts, ofi_build_mode, user_env, log_file, None, util_prov)
         self.fabtestpath = f'{self.libfab_installpath}/bin'
         self.fabtestconfigpath = f'{self.libfab_installpath}/share/fabtests'
@@ -426,15 +468,15 @@ class OMPI:
         return f"{self.ompi_src}/bin/mpirun {self.options}"
 
 class MPICH:
-    def __init__(self, core_prov, hosts, libfab_installpath, nw_interface,
+    def __init__(self, hw, core_prov, hosts, libfab_installpath, nw_interface,
                  server, client, environ, middlewares_path, util_prov=None):
 
-        self.mpich_dir = f'{middlewares_path}/mpich_mpichtest'
-        self.mpichpath = f'{self.mpich_dir}/mpich_mpichsuite'
+        self.mpich_dir = f'{middlewares_path}/mpich_{hw}'
+        self.mpichpath = f'{self.mpich_dir}/mpich'
         self.core_prov = core_prov
         self.hosts = hosts
         self.util_prov = util_prov
-        self.libfab_installpath = f'{libfab_installpath}/libfabric_mpich'
+        self.libfab_installpath = libfab_installpath
         self.nw_interface = nw_interface
         self.server = server
         self.client = client
@@ -482,8 +524,7 @@ class IMPI:
                  server, client, environ, middlewares_path, util_prov=None):
 
         self.impi_src = f'{cloudbees_config.impi_root}'
-        self.mpichpath = f"{middlewares_path}/impi_mpichtest/" \
-                         f"impi_mpichsuite/"
+        self.mpichpath = f'{middlewares_path}/impi/mpichsuite/'
         self.core_prov = core_prov
         self.hosts = hosts
         self.util_prov = util_prov
@@ -534,11 +575,11 @@ class IMPI:
 
 
 class IMBtests(Test):
-    def __init__(self, jobname, buildno, testname, core_prov, fabric,
+    def __init__(self, jobname, buildno, testname, hw, core_prov, fabric,
                  hosts, mpitype, ofi_build_mode, user_env, log_file, test_group,
                  util_prov=None):
 
-        super().__init__(jobname, buildno, testname, core_prov,
+        super().__init__(jobname, buildno, testname, hw, core_prov,
                          fabric, hosts, ofi_build_mode, user_env, log_file, mpitype,
                          util_prov)
 
@@ -625,10 +666,10 @@ class IMBtests(Test):
 
 class OSUtests(Test):
 
-    def __init__(self, jobname, buildno, testname, core_prov, fabric,
+    def __init__(self, jobname, buildno, testname, hw, core_prov, fabric,
                  hosts, mpitype, ofi_build_mode, user_env, log_file, util_prov=None):
 
-        super().__init__(jobname, buildno, testname, core_prov,
+        super().__init__(jobname, buildno, testname, hw, core_prov,
                          fabric, hosts, ofi_build_mode, user_env, log_file, mpitype,
                          util_prov)
 
@@ -638,9 +679,13 @@ class OSUtests(Test):
                           'one-sided':  (2, 1),
                           'startup':    (2, 1)
                      }
-        self.osu_src = f'{self.middlewares_path}/{mpitype}/osu/libexec/'\
+        if mpitype == 'mpich' and hw in ['water', 'grass']:
+            self.mpitype = f'{mpitype}_{hw}'
+        else:
+            self.mpitype = mpitype
+
+        self.osu_src = f'{self.middlewares_path}/{self.mpitype}/osu/libexec/'\
                        'osu-micro-benchmarks/mpi/'
-        self.mpi_type = mpitype
 
     @property
     def execute_condn(self):
@@ -677,10 +722,10 @@ class OSUtests(Test):
 
 class MpichTestSuite(Test):
 
-    def __init__(self, jobname, buildno, testname, core_prov, fabric,
+    def __init__(self, jobname, buildno, testname, hw, core_prov, fabric,
                  hosts, mpitype, ofi_build_mode, user_env, log_file, util_prov=None, weekly=None):
 
-        super().__init__(jobname, buildno, testname, core_prov,
+        super().__init__(jobname, buildno, testname, hw, core_prov,
                          fabric, hosts, ofi_build_mode, user_env, log_file, mpitype,
                          util_prov)
         self.mpi_type = mpitype
@@ -689,7 +734,8 @@ class MpichTestSuite(Test):
         self.pwd = os.getcwd()
         self.weekly = weekly
         self.mpichtests_exclude = {
-        'tcp'   :   { 'rma'      : [('win_shared_put_flush_load 3', 'test')]
+        'tcp'   :   { 'rma'          : [('win_shared_put_flush_load 3', 'test')],
+                      'threads/comm' : [('idup_nb 4','test')]
                     },
         'verbs' :   { 'threads/comm' : [('idup_nb 4','test')],
                       'spawn'        : [('concurrent_spawns 1', 'test')],
@@ -784,9 +830,9 @@ class MpichTestSuite(Test):
 
 class OneCCLTests(Test):
 
-    def __init__(self, jobname, buildno, testname, core_prov, fabric,
+    def __init__(self, jobname, buildno, testname, hw, core_prov, fabric,
                  hosts, ofi_build_mode, user_env, log_file, util_prov=None):
-        super().__init__(jobname, buildno, testname, core_prov, fabric,
+        super().__init__(jobname, buildno, testname, hw, core_prov, fabric,
                          hosts, ofi_build_mode, user_env, log_file, None, util_prov)
 
         self.oneccl_path = f'{self.middlewares_path}/oneccl/'
@@ -848,9 +894,9 @@ class OneCCLTests(Test):
 
 class OneCCLTestsGPU(Test):
 
-    def __init__(self, jobname, buildno, testname, core_prov, fabric,
+    def __init__(self, jobname, buildno, testname, hw, core_prov, fabric,
                  hosts, ofi_build_mode, user_env, log_file, util_prov=None):
-        super().__init__(jobname, buildno, testname, core_prov, fabric,
+        super().__init__(jobname, buildno, testname, hw, core_prov, fabric,
                          hosts, ofi_build_mode, user_env, log_file, None, util_prov)
 
         self.n = 2
@@ -960,9 +1006,9 @@ class OneCCLTestsGPU(Test):
 
 class DaosCartTest(Test):
 
-    def __init__(self, jobname, buildno, testname, core_prov, fabric,
+    def __init__(self, jobname, buildno, testname, hw, core_prov, fabric,
                  hosts, ofi_build_mode, user_env, log_file, util_prov=None):
-        super().__init__(jobname, buildno, testname, core_prov, fabric,
+        super().__init__(jobname, buildno, testname, hw, core_prov, fabric,
                          hosts, ofi_build_mode, user_env, log_file, None, util_prov)
 
 
@@ -1047,10 +1093,10 @@ class DaosCartTest(Test):
 
 class DMABUFTest(Test):
 
-    def __init__(self, jobname, buildno, testname, core_prov, fabric,
+    def __init__(self, jobname, buildno, testname, hw, core_prov, fabric,
                  hosts, ofi_build_mode, user_env, log_file, util_prov=None):
 
-        super().__init__(jobname, buildno, testname, core_prov, fabric,
+        super().__init__(jobname, buildno, testname, hw, core_prov, fabric,
                          hosts, ofi_build_mode, user_env, log_file,
                          None, util_prov)
         self.DMABUFtestpath = f'{self.libfab_installpath}/bin'
@@ -1060,7 +1106,7 @@ class DMABUFTest(Test):
                                             else 0
 
         if util_prov:
-            self.prov = f'{self.core_prov}\;{self.util_prov}'
+            self.prov = f"{self.core_prov}\;{self.util_prov}"
         else:
             self.prov = self.core_prov
 
@@ -1071,27 +1117,63 @@ class DMABUFTest(Test):
             'MLX5_SCATTER_TO_CQE'     : '0'
         }
 
-        self.tests = {
-                'H2H'   : [
-                            'write',
-                            'read',
-                            'send'
-                        ],
-                'H2D'   : [
-                            'write',
-                            'read',
-                            'send'
-                        ],
-                'D2H'   : [
-                            'write',
-                            'read',
-                            'send'
-                        ],
-                'D2D'   : [
-                            'write',
-                            'read',
-                            'send'
-                        ]
+        self.single_node_combinations = {
+                'H2H'   : {
+                            '-m malloc' : ['-m malloc']
+                        },
+                'H2D'   : {
+                            '-m malloc' : [
+                                            '-m device -d 0',
+                                            '-m device -d 1'
+                                          ]
+                        },
+                'D2H'   : {
+                            '-m device -d 0' : ['-m malloc'],
+                            '-m device -d 1' : ['-m malloc']
+                        },
+                'D2D'   : {
+                            '-m device -d 0' : [
+                                                '-m device -d 1',
+                                                '-m device -d 2',
+                                                '-m device -d 3'
+                                               ],
+                            '-m device -d 1' : [
+                                                '-m device -d 2',
+                                                '-m device -d 3'
+                                               ]
+                        }
+        }
+
+        self.double_node_combinations = {
+                'H2H'   : {
+                            '-m malloc' : ['-m malloc']
+                        },
+                'H2D'   : {
+                            '-m malloc' : [
+                                            '-m device -d 0',
+                                            '-m device -d 1',
+                                            '-m device -d 2'
+                                          ]
+                        },
+                'D2H'   : {
+                            '-m device -d 0' : ['-m malloc'],
+                            '-m device -d 1' : ['-m malloc'],
+                            '-m device -d 2' : ['-m malloc'],
+                            '-m device -d 3' : ['-m malloc']
+                        },
+                'D2D'   : {
+                            '-m device -d 0' : [
+                                                '-m device -d 0',
+                                                '-m device -d 1',
+                                                '-m device -d 2',
+                                                '-m device -d 3'
+                                               ],
+                            '-m device -d 1' : [
+                                                '-m device -d 1',
+                                                '-m device -d 2',
+                                                '-m device -d 3'
+                                               ]
+                        }
         }
 
     @property
@@ -1110,27 +1192,29 @@ class DMABUFTest(Test):
     def execute_cmd(self, test_type):
         os.chdir(self.DMABUFtestpath)
         base_cmd = ''
+        operations = ['write', 'read', 'send']
         log_prefix = f"{os.environ['LOG_DIR']}/dmabuf_{self.n}"
-        if 'H2H' in test_type or 'D2H' in test_type:
-            base_cmd = f"{self.cmd} -m malloc -p {self.core_prov}"
+        if self.n == '1':
+            self.tests = self.single_node_combinations
         else:
-            base_cmd = f"{self.cmd} -m device -d 0 -p {self.core_prov}"
+            self.tests = self.double_node_combinations
+        for operation in operations:
+            for key,value in self.tests[test_type].items():
+                for values in value:
+                    server_command = f"{self.cmd} {values} -p {self.core_prov}"
+                    if 'send' in operation:
+                        server_command += f" -t {operation}"
+                    base_cmd = f"-t {operation} -p {self.core_prov} {self.server}"
+                    client_command = f"{self.cmd} {key} {base_cmd}"
+                    RC = common.ClientServerTest(
+                            f"ssh {self.server} {self.dmabuf_env()} {server_command}", \
+                            f"ssh {self.client} {self.dmabuf_env()} {client_command}", \
+                            f"{log_prefix}_server.log", f"{log_prefix}_client.log", \
+                            self.timeout
+                        ).run()
 
-        for test in self.tests[test_type]:
-            client_command = f"{base_cmd} -t {test} {self.server}"
-            if 'send' in test:
-                server_command = f"{base_cmd} -t {test} "
-            else:
-                server_command = f"{base_cmd} "
-            RC = common.ClientServerTest(
-                    f"ssh {self.server} {self.dmabuf_env()} {server_command}",
-                    f"ssh {self.client} {self.dmabuf_env()} {client_command}",
-                    f"{log_prefix}_server.log", f"{log_prefix}_client.log",
-                    self.timeout
-                 ).run()
-
-            if RC == (0, 0):
-                print("------------------ TEST COMPLETED -------------------")
-            else:
-                print("------------------ TEST FAILED -------------------")
-                sys.exit(f"Exiting with returncode: {RC}")
+                    if RC == (0, 0):
+                        print("-------------- TEST COMPLETED ---------------")
+                    else:
+                        print("-------------- TEST FAILED ---------------")
+                        sys.exit(f"Exiting with returncode: {RC}")

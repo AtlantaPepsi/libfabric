@@ -13,8 +13,12 @@ from time import sleep
 from retrying import retry
 import pytest
 
+
+perf_progress_model_cli = "--data-progress manual --control-progress unified"
 SERVER_RESTART_DELAY_MS = 10_1000
 CLIENT_RETRY_INTERVAL_MS = 1_000
+
+
 class SshConnectionError(Exception):
 
     def __init__(self):
@@ -26,7 +30,7 @@ def is_ssh_connection_error(exception):
 
 
 def has_ssh_connection_err_msg(output):
-    err_msgs = ["Connection closed by remote host",
+    err_msgs = ["Connection closed",
                 "Connection reset by peer",
                 "Connection refused",
                 r"ssh_dispatch_run_fatal: .* incorrect signature"]

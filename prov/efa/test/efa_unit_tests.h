@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only */
+/* SPDX-FileCopyrightText: Copyright Amazon.com, Inc. or its affiliates. All rights reserved. */
+
 #ifndef EFA_UNIT_TESTS_H
 #define EFA_UNIT_TESTS_H
 
@@ -30,9 +33,12 @@ struct efa_resource {
 struct fi_info *efa_unit_test_alloc_hints(enum fi_ep_type ep_type);
 
 void efa_unit_test_resource_construct(struct efa_resource *resource, enum fi_ep_type ep_type);
+void efa_unit_test_resource_construct_ep_not_enabled(
+	struct efa_resource *resource, enum fi_ep_type ep_type);
 void efa_unit_test_resource_construct_with_hints(struct efa_resource *resource,
 						 enum fi_ep_type ep_type,
-						 struct fi_info* hints);
+						 struct fi_info *hints,
+						 bool enable_ep);
 
 void efa_unit_test_resource_destruct(struct efa_resource *resource);
 
@@ -99,6 +105,7 @@ void test_efa_rdm_ep_dc_atomic_error_handling();
 void test_efa_rdm_ep_send_with_shm_no_copy();
 void test_efa_rdm_ep_rma_without_caps();
 void test_efa_rdm_ep_atomic_without_caps();
+void test_efa_rdm_ep_setopt_shared_memory_permitted();
 void test_dgram_cq_read_empty_cq();
 void test_ibv_cq_ex_read_empty_cq();
 void test_ibv_cq_ex_read_failed_poll();
@@ -150,5 +157,7 @@ void test_efa_rdm_peer_get_runt_size_host_memory_exceeding_total_len();
 void test_efa_rdm_peer_get_runt_size_host_memory_normal();
 void test_efa_rdm_peer_select_readbase_rtm_no_runt();
 void test_efa_rdm_peer_select_readbase_rtm_do_runt();
+void test_efa_domain_open_ops_wrong_name();
+void test_efa_domain_open_ops_mr_query();
 
 #endif

@@ -1,35 +1,5 @@
-/*
- * Copyright (c) Amazon.com, Inc. or its affiliates.
- * All rights reserved.
- *
- * This software is available to you under a choice of one of two
- * licenses.  You may choose to be licensed under the terms of the GNU
- * General Public License (GPL) Version 2, available from the file
- * COPYING in the main directory of this source tree, or the
- * BSD license below:
- *
- *     Redistribution and use in source and binary forms, with or
- *     without modification, are permitted provided that the following
- *     conditions are met:
- *
- *      - Redistributions of source code must retain the above
- *        copyright notice, this list of conditions and the following
- *        disclaimer.
- *
- *      - Redistributions in binary form must reproduce the above
- *        copyright notice, this list of conditions and the following
- *        disclaimer in the documentation and/or other materials
- *        provided with the distribution.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
- * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
- * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
- * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+/* SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only */
+/* SPDX-FileCopyrightText: Copyright Amazon.com, Inc. or its affiliates. All rights reserved. */
 
 #include <inttypes.h>
 #include <stdlib.h>
@@ -342,11 +312,13 @@ void efa_rdm_ep_record_tx_op_submitted(struct efa_rdm_ep *ep, struct efa_rdm_pke
 	struct efa_rdm_ope *ope;
 
 	ope = pkt_entry->ope;
+	assert(ope);
+
 	/*
 	 * peer can be NULL when the pkt_entry is a RMA_CONTEXT_PKT,
 	 * and the RMA is a local read toward the endpoint itself
 	 */
-	peer = efa_rdm_ep_get_peer(ep, pkt_entry->addr);
+	peer = ope->peer;
 	if (peer)
 		dlist_insert_tail(&pkt_entry->entry,
 				  &peer->outstanding_tx_pkts);
@@ -557,51 +529,31 @@ void efa_rdm_ep_queue_rnr_pkt(struct efa_rdm_ep *ep,
  * return negative libfabric error code for error. Possible errors include:
  * -FI_EAGAIN	temporarily out of resource to send packet
  */
-ssize_t efa_rdm_ep_trigger_handshake(struct efa_rdm_ep *ep,
-				     fi_addr_t addr)
+ssize_t efa_rdm_ep_trigger_handshake(struct efa_rdm_ep *ep, struct efa_rdm_peer *peer)
 {
-	struct efa_rdm_peer *peer;
 	struct efa_rdm_ope *txe;
+	struct fi_msg msg = {0};
 	ssize_t err;
 
-	peer = efa_rdm_ep_get_peer(ep, addr);
 	assert(peer);
-
 	if ((peer->flags & EFA_RDM_PEER_HANDSHAKE_RECEIVED) ||
 	    (peer->flags & EFA_RDM_PEER_REQ_SENT))
 		return 0;
 
-	/* TODO: use efa_rdm_ep_alloc_txe to allocate txe */
-	txe = ofi_buf_alloc(ep->ope_pool);
+	msg.addr = peer->efa_fiaddr;
+
+	txe = efa_rdm_ep_alloc_txe(ep, peer, &msg, ofi_op_write, 0, 0);
+
 	if (OFI_UNLIKELY(!txe)) {
 		EFA_WARN(FI_LOG_EP_CTRL, "TX entries exhausted.\n");
 		return -FI_EAGAIN;
 	}
 
-	txe->ep = ep;
-	txe->total_len = 0;
-	txe->addr = addr;
-	txe->peer = efa_rdm_ep_get_peer(ep, txe->addr);
-	assert(txe->peer);
-	dlist_insert_tail(&txe->peer_entry, &txe->peer->txe_list);
-	txe->msg_id = -1;
-	txe->cq_entry.flags = FI_RMA | FI_WRITE;
-	txe->cq_entry.buf = NULL;
-	dlist_init(&txe->queued_pkts);
-
-	txe->type = EFA_RDM_TXE;
-	txe->op = ofi_op_write;
-	txe->state = EFA_RDM_TXE_REQ;
-
-	txe->bytes_acked = 0;
-	txe->bytes_sent = 0;
-	txe->window = 0;
-	txe->rma_iov_count = 0;
-	txe->iov_count = 0;
+	/* efa_rdm_ep_alloc_txe() joins ep->base_ep.util_ep.tx_op_flags and passed in flags,
+	 * reset to desired flags (remove things like FI_DELIVERY_COMPLETE, and FI_COMPLETION)
+	 */
 	txe->fi_flags = EFA_RDM_TXE_NO_COMPLETION | EFA_RDM_TXE_NO_COUNTER;
-	txe->internal_flags = 0;
-
-	dlist_insert_tail(&txe->ep_entry, &ep->txe_list);
+	txe->msg_id = -1;
 
 	err = efa_rdm_ope_post_send(txe, EFA_RDM_EAGER_RTW_PKT);
 
@@ -619,14 +571,35 @@ ssize_t efa_rdm_ep_trigger_handshake(struct efa_rdm_ep *ep,
  */
 ssize_t efa_rdm_ep_post_handshake(struct efa_rdm_ep *ep, struct efa_rdm_peer *peer)
 {
+	struct efa_rdm_ope *txe;
+	struct fi_msg msg = {0};
 	struct efa_rdm_pke *pkt_entry;
 	fi_addr_t addr;
 	ssize_t ret;
 
 	addr = peer->efa_fiaddr;
-	pkt_entry = efa_rdm_pke_alloc(ep, ep->efa_tx_pkt_pool, EFA_RDM_PKE_FROM_EFA_TX_POOL);
-	if (OFI_UNLIKELY(!pkt_entry))
+	msg.addr = addr;
+
+	/* ofi_op_write is ignored in handshake path */
+	txe = efa_rdm_ep_alloc_txe(ep, peer, &msg, ofi_op_write, 0, 0);
+
+	if (OFI_UNLIKELY(!txe)) {
+		EFA_WARN(FI_LOG_EP_CTRL, "TX entries exhausted.\n");
 		return -FI_EAGAIN;
+	}
+
+	/* efa_rdm_ep_alloc_txe() joins ep->base_ep.util_ep.tx_op_flags and passed in flags,
+	 * reset to desired flags (remove things like FI_DELIVERY_COMPLETE, and FI_COMPLETION)
+	 */
+	txe->fi_flags = EFA_RDM_TXE_NO_COMPLETION | EFA_RDM_TXE_NO_COUNTER;
+
+	pkt_entry = efa_rdm_pke_alloc(ep, ep->efa_tx_pkt_pool, EFA_RDM_PKE_FROM_EFA_TX_POOL);
+	if (OFI_UNLIKELY(!pkt_entry)) {
+		EFA_WARN(FI_LOG_EP_CTRL, "PKE entries exhausted.\n");
+		return -FI_EAGAIN;
+	}
+
+	pkt_entry->ope = txe;
 
 	efa_rdm_pke_init_handshake(pkt_entry, addr);
 
@@ -706,4 +679,44 @@ size_t efa_rdm_ep_get_memory_alignment(struct efa_rdm_ep *ep, enum fi_hmem_iface
 	}
 
 	return memory_alignment;
+}
+
+/**
+ * @brief Get the vendor error code for an endpoint's CQ
+ *
+ * This function is essentially a wrapper for `ibv_wc_read_vendor_err()`; making
+ * a best-effort attempt to promote the error code to a proprietary EFA
+ * provider error code.
+ *
+ * @param[in]	ep	EFA RDM endpoint
+ * @return	EFA-specific error code
+ * @sa		#EFA_PROV_ERRNOS
+ *
+ * @todo Currently, this only checks for unresponsive receiver
+ * (#EFA_IO_COMP_STATUS_LOCAL_ERROR_UNRESP_REMOTE) and attempts to promote it to
+ * #FI_EFA_ERR_ESTABLISHED_RECV_UNRESP. This should be expanded to handle other
+ * RDMA Core error codes (#EFA_IO_COMP_STATUSES) for the sake of more accurate
+ * error reporting
+ */
+int efa_rdm_ep_get_prov_errno(struct efa_rdm_ep *ep) {
+	uint32_t vendor_err = ibv_wc_read_vendor_err(ep->ibv_cq_ex);
+	struct efa_rdm_pke *pkt_entry = (void *) (uintptr_t) ep->ibv_cq_ex->wr_id;
+	struct efa_rdm_peer *peer;
+
+	if (OFI_LIKELY(pkt_entry && pkt_entry->addr))
+		peer = efa_rdm_ep_get_peer(ep, pkt_entry->addr);
+	else
+		return vendor_err;
+
+	switch (vendor_err) {
+	case EFA_IO_COMP_STATUS_LOCAL_ERROR_UNRESP_REMOTE: {
+		if (peer->flags & EFA_RDM_PEER_HANDSHAKE_RECEIVED)
+			vendor_err = FI_EFA_ERR_ESTABLISHED_RECV_UNRESP;
+		break;
+	}
+	default:
+		break;
+	}
+
+	return vendor_err;
 }

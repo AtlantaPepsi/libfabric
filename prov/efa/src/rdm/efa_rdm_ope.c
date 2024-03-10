@@ -1,35 +1,5 @@
-/*
- * Copyright (c) 2022 Amazon.com, Inc. or its affiliates.
- * All rights reserved.
- *
- * This software is available to you under a choice of one of two
- * licenses.  You may choose to be licensed under the terms of the GNU
- * General Public License (GPL) Version 2, available from the file
- * COPYING in the main directory of this source tree, or the
- * BSD license below:
- *
- *     Redistribution and use in source and binary forms, with or
- *     without modification, are permitted provided that the following
- *     conditions are met:
- *
- *      - Redistributions of source code must retain the above
- *        copyright notice, this list of conditions and the following
- *        disclaimer.
- *
- *      - Redistributions in binary form must reproduce the above
- *        copyright notice, this list of conditions and the following
- *        disclaimer in the documentation and/or other materials
- *        provided with the distribution.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
- * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
- * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
- * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+/* SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only */
+/* SPDX-FileCopyrightText: Copyright Amazon.com, Inc. or its affiliates. All rights reserved. */
 
 #include <assert.h>
 #include "efa.h"
@@ -69,6 +39,7 @@ void efa_rdm_txe_construct(struct efa_rdm_ope *txe,
 	txe->bytes_sent = 0;
 	txe->window = 0;
 	txe->iov_count = msg->iov_count;
+	txe->rma_iov_count = 0;
 	txe->msg_id = 0;
 	txe->efa_outstanding_tx_ops = 0;
 	dlist_init(&txe->queued_pkts);
@@ -641,8 +612,13 @@ void efa_rdm_rxe_handle_error(struct efa_rdm_ope *rxe, int err, int prov_errno)
 		err_entry.err_data_size = 0;
 	}
 
-	EFA_WARN(FI_LOG_CQ, "err: %d, message: %s (%d)\n", err_entry.err,
-	         efa_strerror(err_entry.prov_errno, err_entry.err_data), err_entry.prov_errno);
+	EFA_WARN(FI_LOG_CQ, "err: %d, message: %s (%d)\n",
+		err_entry.err,
+		err_entry.err_data
+			? (const char *) err_entry.err_data
+			: efa_strerror(err_entry.prov_errno),
+		 err_entry.prov_errno);
+	efa_show_help(err_entry.prov_errno);
 	/*
 	 * TODO: We can't free the rxe as we may receive additional
 	 * packets for this entry. Add ref counting so the rxe can safely
@@ -731,8 +707,14 @@ void efa_rdm_txe_handle_error(struct efa_rdm_ope *txe, int err, int prov_errno)
 		err_entry.err_data_size = 0;
 	}
 
-	EFA_WARN(FI_LOG_CQ, "err: %d, message: %s (%d)\n", err_entry.err,
-	         efa_strerror(err_entry.prov_errno, err_entry.err_data), err_entry.prov_errno);
+	EFA_WARN(FI_LOG_CQ, "err: %d, message: %s (%d)\n",
+		err_entry.err,
+		err_entry.err_data
+			? (const char *) err_entry.err_data
+			: efa_strerror(err_entry.prov_errno),
+		err_entry.prov_errno);
+
+	efa_show_help(err_entry.prov_errno);
 
 	/*
 	 * TODO: We can't free the txe as we may receive a control packet
@@ -1683,7 +1665,12 @@ int efa_rdm_rxe_post_local_read_or_queue(struct efa_rdm_ope *rxe,
 	}
 
 	txe->local_read_pkt_entry = pkt_entry;
-	return efa_rdm_ope_post_remote_read_or_queue(txe);
+	err = efa_rdm_ope_post_remote_read_or_queue(txe);
+	/* The rx pkts are held until the local read completes */
+	if (txe->local_read_pkt_entry->alloc_type == EFA_RDM_PKE_FROM_EFA_RX_POOL && !err)
+		txe->ep->efa_rx_pkts_held++;
+
+	return err;
 }
 
 /**
@@ -1702,8 +1689,8 @@ ssize_t efa_rdm_ope_post_send(struct efa_rdm_ope *ope, int pkt_type)
 	struct efa_rdm_pke *pkt_entry_vec[EFA_RDM_EP_MAX_WR_PER_IBV_POST_SEND];
 	ssize_t err;
 	size_t segment_offset;
-	int pkt_entry_cnt, pkt_entry_data_size_vec[EFA_RDM_EP_MAX_WR_PER_IBV_POST_SEND];
-	int i, j;
+	int pkt_entry_cnt, pkt_entry_cnt_allocated = 0, pkt_entry_data_size_vec[EFA_RDM_EP_MAX_WR_PER_IBV_POST_SEND];
+	int i;
 
 	err = efa_rdm_ope_prepare_to_post_send(ope, pkt_type, &pkt_entry_cnt, pkt_entry_data_size_vec);
 	if (err)
@@ -1715,18 +1702,21 @@ ssize_t efa_rdm_ope_post_send(struct efa_rdm_ope *ope, int pkt_type)
 	segment_offset = efa_rdm_pkt_type_contains_data(pkt_type) ? ope->bytes_sent : -1;
 	for (i = 0; i < pkt_entry_cnt; ++i) {
 		pkt_entry_vec[i] = efa_rdm_pke_alloc(ep, ep->efa_tx_pkt_pool, EFA_RDM_PKE_FROM_EFA_TX_POOL);
-		assert(pkt_entry_vec[i]);
+
+		if (OFI_UNLIKELY(!pkt_entry_vec[i])) {
+			err = -FI_EAGAIN;
+			goto handle_err;
+		}
+
+		pkt_entry_cnt_allocated++;
 
 		err = efa_rdm_pke_fill_data(pkt_entry_vec[i],
 					    pkt_type,
 					    ope,
 					    segment_offset,
 					    pkt_entry_data_size_vec[i]);
-		if (err) {
-			for (j = 0; j <= i; ++j)
-				efa_rdm_pke_release_tx(pkt_entry_vec[j]);
+		if (err)
 			goto handle_err;
-		}
 
 		if (segment_offset != -1 && pkt_entry_cnt > 1) {
 			assert(pkt_entry_data_size_vec[i] > 0);
@@ -1734,20 +1724,23 @@ ssize_t efa_rdm_ope_post_send(struct efa_rdm_ope *ope, int pkt_type)
 		}
 	}
 
+	assert(pkt_entry_cnt == pkt_entry_cnt_allocated);
+
 	err = efa_rdm_pke_sendv(pkt_entry_vec, pkt_entry_cnt);
-	if (err) {
-		for (i = 0; i < pkt_entry_cnt; ++i)
-			efa_rdm_pke_release_tx(pkt_entry_vec[i]);
+	if (err)
 		goto handle_err;
-	}
 
 	ope->peer->flags |= EFA_RDM_PEER_REQ_SENT;
 	for (i = 0; i < pkt_entry_cnt; ++i)
 		efa_rdm_pke_handle_sent(pkt_entry_vec[i]);
-	return 0;
+
+	return FI_SUCCESS;
 
 handle_err:
-		return efa_rdm_ope_post_send_fallback(ope, pkt_type, err);
+	for (i = 0; i < pkt_entry_cnt_allocated; ++i)
+		efa_rdm_pke_release_tx(pkt_entry_vec[i]);
+
+	return efa_rdm_ope_post_send_fallback(ope, pkt_type, err);
 }
 
 /**

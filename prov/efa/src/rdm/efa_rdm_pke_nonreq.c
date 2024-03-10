@@ -1,5 +1,5 @@
-/* Copyright Amazon.com, Inc. or its affiliates. All rights reserved. */
 /* SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only */
+/* SPDX-FileCopyrightText: Copyright Amazon.com, Inc. or its affiliates. All rights reserved. */
 
 #include "efa.h"
 
@@ -497,6 +497,11 @@ void efa_rdm_pke_handle_rma_read_completion(struct efa_rdm_pke *context_pkt_entr
 			if (txe->addr == FI_ADDR_NOTAVAIL) {
 				data_pkt_entry = txe->local_read_pkt_entry;
 				assert(data_pkt_entry->payload_size > 0);
+				/* We were using a held rx pkt to post local read */
+				if (data_pkt_entry->alloc_type == EFA_RDM_PKE_FROM_EFA_RX_POOL) {
+					assert(txe->ep->efa_rx_pkts_held > 0);
+					txe->ep->efa_rx_pkts_held--;
+				}
 				efa_rdm_pke_handle_data_copied(data_pkt_entry);
 			} else {
 				assert(txe && txe->cq_entry.flags & FI_READ);
@@ -801,7 +806,7 @@ void efa_rdm_pke_handle_atomrsp_recv(struct efa_rdm_pke *pkt_entry)
 	                           txe->atomic_ex.resp_iov_count, atomrsp_pkt->data,
 	                           atomrsp_hdr->seg_length);
 	if (OFI_UNLIKELY(ret < 0)) {
-		efa_base_ep_write_eq_error(&pkt_entry->ep->base_ep, FI_EMSGSIZE, FI_EFA_LOCAL_ERROR_BAD_LENGTH);
+		efa_base_ep_write_eq_error(&pkt_entry->ep->base_ep, FI_EMSGSIZE, EFA_IO_COMP_STATUS_LOCAL_ERROR_BAD_LENGTH);
 		return;
 	}
 

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only */
+/* SPDX-FileCopyrightText: Copyright Amazon.com, Inc. or its affiliates. All rights reserved. */
+
 #include "efa_unit_tests.h"
 #include "dgram/efa_dgram_ep.h"
 #include "dgram/efa_dgram_cq.h"
@@ -45,7 +48,7 @@ void test_impl_cq_read_empty_cq(struct efa_resource *resource, enum fi_ep_type e
  * @brief verify DGRAM CQ's fi_cq_read() works with empty CQ
  *
  * When CQ is empty, fi_cq_read() should return -FI_EAGAIN.
- * 
+ *
  * @param[in]	state		struct efa_resource that is managed by the framework
  */
 void test_dgram_cq_read_empty_cq(struct efa_resource **state)
@@ -58,7 +61,7 @@ void test_dgram_cq_read_empty_cq(struct efa_resource **state)
  * @brief verify RDM CQ's fi_cq_read() works with empty CQ
  *
  * When CQ is empty, fi_cq_read() should return -FI_EAGAIN.
- * 
+ *
  * @param[in]	state		struct efa_resource that is managed by the framework
  */
 void test_ibv_cq_ex_read_empty_cq(struct efa_resource **state)
@@ -77,12 +80,10 @@ void test_ibv_cq_ex_read_empty_cq(struct efa_resource **state)
  * @param[in]  local_host_id    Local(sender) host id
  * @param[in]  peer_host_id     Peer(receiver) host id
  * @param[in]  vendor_error     Vendor error returned by ibv_read_vendor_err
- * @param[in]  err_prefix       Expected error message prefix from fi_cq_strerror. For RDM endpoint the error
- *                              might contain conditional information after the prefix.
  */
 static void test_rdm_cq_read_bad_send_status(struct efa_resource *resource,
                                              uint64_t local_host_id, uint64_t peer_host_id,
-                                             int vendor_error, const char *err_prefix)
+                                             int vendor_error)
 {
 	const char *strerror;
 	fi_addr_t addr;
@@ -106,8 +107,11 @@ static void test_rdm_cq_read_bad_send_status(struct efa_resource *resource,
 	ibv_qpx = efa_rdm_ep->base_ep.qp->ibv_qp_ex;
 	ibv_cqx = efa_rdm_ep->ibv_cq_ex;
 	/* close shm_ep to force efa_rdm_ep to use efa device to send */
-	fi_close(&efa_rdm_ep->shm_ep->fid);
-	efa_rdm_ep->shm_ep = NULL;
+	if (efa_rdm_ep->shm_ep) {
+		err = fi_close(&efa_rdm_ep->shm_ep->fid);
+		assert_int_equal(err, 0);
+		efa_rdm_ep->shm_ep = NULL;
+	}
 
 	ret = fi_getname(&resource->ep->fid, &raw_addr, &raw_addr_len);
 	assert_int_equal(ret, 0);
@@ -161,9 +165,6 @@ static void test_rdm_cq_read_bad_send_status(struct efa_resource *resource,
 	assert_int_equal(cq_err_entry.err, FI_EIO);
 	assert_int_equal(cq_err_entry.prov_errno, vendor_error);
 
-	/* Verify prefix is expected */
-	assert_true(strstr(strerror, err_prefix) == strerror);
-
 	/* Reset value */
 	memset(host_id_str, 0, sizeof(host_id_str));
 
@@ -204,13 +205,7 @@ void test_rdm_cq_read_bad_send_status_unresponsive_receiver(struct efa_resource 
 	struct efa_resource *resource = *state;
 	test_rdm_cq_read_bad_send_status(resource,
 					 0x1234567812345678, 0x8765432187654321,
-					 FI_EFA_LOCAL_ERROR_UNRESP_REMOTE,
-					 "Unresponsive receiver. "
-					 "This error is typically caused by a peer hardware failure or "
-					 "incorrect inbound/outbound rules in the security group - "
-					 "EFA requires \"All traffic\" type allowlisting. "
-					 "Please also verify the peer application has not "
-					 "terminated unexpectedly.");
+					 EFA_IO_COMP_STATUS_LOCAL_ERROR_UNRESP_REMOTE);
 }
 
 /**
@@ -227,13 +222,7 @@ void test_rdm_cq_read_bad_send_status_unresponsive_receiver_missing_peer_host_id
 	struct efa_resource *resource = *state;
 	test_rdm_cq_read_bad_send_status(resource,
 					 0x1234567812345678, 0,
-					 FI_EFA_LOCAL_ERROR_UNRESP_REMOTE,
-					 "Unresponsive receiver. "
-					 "This error is typically caused by a peer hardware failure or "
-					 "incorrect inbound/outbound rules in the security group - "
-					 "EFA requires \"All traffic\" type allowlisting. "
-					 "Please also verify the peer application has not "
-					 "terminated unexpectedly.");
+					 EFA_IO_COMP_STATUS_LOCAL_ERROR_UNRESP_REMOTE);
 }
 
 /**
@@ -251,11 +240,7 @@ void test_rdm_cq_read_bad_send_status_invalid_qpn(struct efa_resource **state)
 
 	test_rdm_cq_read_bad_send_status(resource,
 					 0x1234567812345678, 0x8765432187654321,
-					 FI_EFA_REMOTE_ERROR_BAD_DEST_QPN,
-					 "Invalid receiver queue pair number (QPN). "
-					 "This error is typically caused by a crashed peer. "
-					 "Please verify the peer application has not "
-					 "terminated unexpectedly.");
+					 EFA_IO_COMP_STATUS_REMOTE_ERROR_BAD_DEST_QPN);
 }
 
 /**
@@ -272,7 +257,7 @@ void test_rdm_cq_read_bad_send_status_message_too_long(struct efa_resource **sta
 	struct efa_resource *resource = *state;
 	test_rdm_cq_read_bad_send_status(resource,
 					 0x1234567812345678, 0x8765432187654321,
-					 FI_EFA_LOCAL_ERROR_BAD_LENGTH, "Message too long");
+					 EFA_IO_COMP_STATUS_LOCAL_ERROR_BAD_LENGTH);
 }
 
 /**
@@ -280,7 +265,7 @@ void test_rdm_cq_read_bad_send_status_message_too_long(struct efa_resource **sta
  *
  * When an ibv_post_recv() operation failed, no data was received. Therefore libfabric cannot
  * find the corresponding RX operation to write a CQ error. It will write an EQ error instead.
- * 
+ *
  * @param[in]	state		struct efa_resource that is managed by the framework
  */
 void test_ibv_cq_ex_read_bad_recv_status(struct efa_resource **state)
@@ -292,13 +277,22 @@ void test_ibv_cq_ex_read_bad_recv_status(struct efa_resource **state)
 	struct fi_eq_err_entry eq_err_entry;
 	int ret;
 
+
 	efa_unit_test_resource_construct(resource, FI_EP_RDM);
 	efa_rdm_ep = container_of(resource->ep, struct efa_rdm_ep, base_ep.util_ep.ep_fid);
 
+	/*
+	 * The rx pkt entry should only be allocated and posted by the progress engine.
+	 * However, to mock a receive completion, we have to allocate an rx entry
+	 * and modify it out of band. The proess engine grow the rx pool in the first
+	 * call and set efa_rdm_ep->efa_rx_pkts_posted as the rx pool size. Here we
+	 * follow the progress engine to set the efa_rx_pkts_posted counter manually
+	 * TODO: modify the rx pkt as part of the ibv cq poll mock so we don't have to
+	 * allocate pkt entry and hack the pkt counters.
+	 */
 	pkt_entry = efa_rdm_pke_alloc(efa_rdm_ep, efa_rdm_ep->efa_rx_pkt_pool, EFA_RDM_PKE_FROM_EFA_RX_POOL);
-	/* A receive completion requires efa rx pkts are posted */
-	efa_rdm_ep->efa_rx_pkts_posted++;
 	assert_non_null(pkt_entry);
+	efa_rdm_ep->efa_rx_pkts_posted = efa_rdm_ep_get_rx_pool_size(efa_rdm_ep);
 
 	efa_rdm_ep->ibv_cq_ex->start_poll = &efa_mock_ibv_start_poll_return_mock;
 	efa_rdm_ep->ibv_cq_ex->end_poll = &efa_mock_ibv_end_poll_check_mock;
@@ -312,28 +306,26 @@ void test_ibv_cq_ex_read_bad_recv_status(struct efa_resource **state)
 	 * therefore use will_return_always()
 	 */
 	will_return_always(efa_mock_ibv_read_opcode_return_mock, IBV_WC_RECV);
-	will_return(efa_mock_ibv_read_vendor_err_return_mock, FI_EFA_LOCAL_ERROR_UNRESP_REMOTE);
+	will_return(efa_mock_ibv_read_vendor_err_return_mock, EFA_IO_COMP_STATUS_LOCAL_ERROR_UNRESP_REMOTE);
 	efa_rdm_ep->ibv_cq_ex->wr_id = (uintptr_t)pkt_entry;
 	efa_rdm_ep->ibv_cq_ex->status = IBV_WC_GENERAL_ERR;
-	ret = fi_cq_read(resource->cq, &cq_entry, 1);
-	/* TODO:
-	 *
-	 * Our current behavior is to return -FI_EAGAIN, but it is not right.
-	 * We need to fix the behaivor in the provider and update the assertion.
+	/* the recv error will not populate to application cq because it's an EFA internal error and
+	 * and not related to any application recv. Currently we can only read the error from eq.
 	 */
+	ret = fi_cq_read(resource->cq, &cq_entry, 1);
 	assert_int_equal(ret, -FI_EAGAIN);
 
 	ret = fi_eq_readerr(resource->eq, &eq_err_entry, 0);
 	assert_int_equal(ret, sizeof(eq_err_entry));
 	assert_int_equal(eq_err_entry.err, FI_EIO);
-	assert_int_equal(eq_err_entry.prov_errno, FI_EFA_LOCAL_ERROR_UNRESP_REMOTE);
+	assert_int_equal(eq_err_entry.prov_errno, EFA_IO_COMP_STATUS_LOCAL_ERROR_UNRESP_REMOTE);
 }
 
 /**
  * @brief verify that fi_cq_read/fi_cq_readerr works properly when ibv_start_poll failed.
  *
  * When an ibv_start_poll() failed. Libfabric should write an EQ error.
- * 
+ *
  * @param[in]	state		struct efa_resource that is managed by the framework
  */
 void test_ibv_cq_ex_read_failed_poll(struct efa_resource **state)
@@ -352,7 +344,7 @@ void test_ibv_cq_ex_read_failed_poll(struct efa_resource **state)
 	efa_rdm_ep->ibv_cq_ex->read_vendor_err = &efa_mock_ibv_read_vendor_err_return_mock;
 
 	will_return(efa_mock_ibv_start_poll_return_mock, EFAULT);
-	will_return(efa_mock_ibv_read_vendor_err_return_mock, FI_EFA_LOCAL_ERROR_UNRESP_REMOTE);
+	will_return(efa_mock_ibv_read_vendor_err_return_mock, EFA_IO_COMP_STATUS_LOCAL_ERROR_UNRESP_REMOTE);
 
 	ret = fi_cq_read(resource->cq, &cq_entry, 1);
 	/* TODO:
@@ -364,7 +356,7 @@ void test_ibv_cq_ex_read_failed_poll(struct efa_resource **state)
 	ret = fi_eq_readerr(resource->eq, &eq_err_entry, 0);
 	assert_int_equal(ret, sizeof(eq_err_entry));
 	assert_int_not_equal(eq_err_entry.err, FI_ENOENT);
-	assert_int_equal(eq_err_entry.prov_errno, FI_EFA_LOCAL_ERROR_UNRESP_REMOTE);
+	assert_int_equal(eq_err_entry.prov_errno, EFA_IO_COMP_STATUS_LOCAL_ERROR_UNRESP_REMOTE);
 }
 
 #if HAVE_EFADV_CQ_EX
@@ -373,7 +365,7 @@ void test_ibv_cq_ex_read_failed_poll(struct efa_resource **state)
  * Simulate EFA device by setting peer AH to unknown and make sure the
  * endpoint recovers the peer address iff(if and only if) the peer is
  * inserted to AV.
- * 
+ *
  * @param resource		struct efa_resource that is managed by the framework
  * @param remove_peer	Boolean value that indicates if the peer was removed explicitly
  * @param support_efadv_cq	Boolean value that indicates if EFA device supports EFA DV CQ
@@ -427,10 +419,19 @@ static void test_impl_ibv_cq_ex_read_unknow_peer_ah(struct efa_resource *resourc
 	assert_non_null(peer);
 	peer->flags |= EFA_RDM_PEER_HANDSHAKE_SENT;
 
-	/* Setup packet entry */
+	/*
+	 * The rx pkt entry should only be allocated and posted by the progress engine.
+	 * However, to mock a receive completion, we have to allocate an rx entry
+	 * and modify it out of band. The proess engine grow the rx pool in the first
+	 * call and set efa_rdm_ep->efa_rx_pkts_posted as the rx pool size. Here we
+	 * follow the progress engine to set the efa_rx_pkts_posted counter manually
+	 * TODO: modify the rx pkt as part of the ibv cq poll mock so we don't have to
+	 * allocate pkt entry and hack the pkt counters.
+	 */
 	pkt_entry = efa_rdm_pke_alloc(efa_rdm_ep, efa_rdm_ep->efa_rx_pkt_pool, EFA_RDM_PKE_FROM_EFA_RX_POOL);
-	/* A receive completion requires efa rx pkts are posted */
-	efa_rdm_ep->efa_rx_pkts_posted++;
+	assert_non_null(pkt_entry);
+	efa_rdm_ep->efa_rx_pkts_posted = efa_rdm_ep_get_rx_pool_size(efa_rdm_ep);
+
 	pkt_attr.msg_id = 0;
 	pkt_attr.connid = raw_addr.qkey;
 	/* Packet type must be in [EFA_RDM_REQ_PKT_BEGIN, EFA_RDM_EXTRA_REQ_PKT_END) */
@@ -454,7 +455,7 @@ static void test_impl_ibv_cq_ex_read_unknow_peer_ah(struct efa_resource *resourc
 		/* Return unknown AH from efadv */
 		will_return(efa_mock_efadv_wc_read_sgid_return_zero_code_and_expect_next_poll_and_set_gid, raw_addr.raw);
 	} else {
-		expect_function_call(efa_mock_ibv_next_poll_check_function_called_and_return_mock);	
+		expect_function_call(efa_mock_ibv_next_poll_check_function_called_and_return_mock);
 	}
 
 	/* Read 1 entry with unknown AH */
@@ -496,7 +497,7 @@ static void test_impl_ibv_cq_ex_read_unknow_peer_ah(struct efa_resource *resourc
  * for which the EFA device returns an unknown AH. The endpoint will retrieve
  * the peer's raw address using efadv verbs, and recover it's AH using
  * Raw:QPN:QKey.
- * 
+ *
  * @param[in]	state		struct efa_resource that is managed by the framework
  */
 void test_ibv_cq_ex_read_recover_forgotten_peer_ah(struct efa_resource **state)
@@ -509,7 +510,7 @@ void test_ibv_cq_ex_read_recover_forgotten_peer_ah(struct efa_resource **state)
  * @brief Verify that RDM endpoint falls back to ibv_create_cq_ex if rdma-core
  * provides efadv_create_cq verb but EFA device does not support EFA DV CQ.
  * In this case the endpoint will not attempt to recover a forgotten peer's address.
- * 
+ *
  * @param[in]	state		struct efa_resource that is managed by the framework
  */
 void test_rdm_fallback_to_ibv_create_cq_ex_cq_read_ignore_forgotton_peer(struct efa_resource **state)
@@ -524,7 +525,7 @@ void test_rdm_fallback_to_ibv_create_cq_ex_cq_read_ignore_forgotton_peer(struct 
  * The endpoint receives a packet from an alien peer, which corresponds to
  * an unknown AH. The endpoint attempts to look up the AH for the peer but
  * was rightly unable to, thus ignoring the packet.
- * 
+ *
  * @param[in]	state		struct efa_resource that is managed by the framework
  */
 void test_ibv_cq_ex_read_ignore_removed_peer(struct efa_resource **state)

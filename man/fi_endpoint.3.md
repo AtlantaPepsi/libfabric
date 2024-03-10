@@ -478,7 +478,8 @@ Endpoint protocol operations may be retrieved using fi_getopt or set
 using fi_setopt.  Applications specify the level that a desired option
 exists, identify the option, and provide input/output buffers to get
 or set the option.  fi_setopt provides an application a way to adjust
-low-level protocol and implementation specific details of an endpoint.
+low-level protocol and implementation specific details of an endpoint,
+and must be called before the endpoint is enabled (fi_enable).
 
 The following option levels and option names and parameters are defined.
 
@@ -550,22 +551,6 @@ The following option levels and option names and parameters are defined.
 : The FI_HMEM_DISABLE_P2P environment variable discussed in
   [`fi_mr`(3)](fi_mr.3.html) takes precedence over this setopt option.
 
-- *FI_OPT_XPU_TRIGGER - struct fi_trigger_xpu \**
-: This option only applies to the fi_getopt() call.  It is used to query
-  the maximum number of variables required to support XPU
-  triggered operations, along with the size of each variable.
-
-  The user provides a filled out struct fi_trigger_xpu on input.  The iface
-  and device fields should reference an HMEM domain.  If the provider does not
-  support XPU triggered operations from the given device, fi_getopt() will
-  return -FI_EOPNOTSUPP.  On input, var should reference an array of
-  struct fi_trigger_var data structures, with count set to the size of the
-  referenced array.  If count is 0, the var field will be ignored, and the
-  provider will return the number of fi_trigger_var structures needed.  If
-  count is > 0, the provider will set count to the needed value, and for
-  each fi_trigger_var available, set the datatype and count of the variable
-  used for the trigger.
-
 - *FI_OPT_CUDA_API_PERMITTED - bool \**
 : This option only applies to the fi_setopt call. It is used to control
   endpoint's behavior in making calls to CUDA API. By default, an endpoint
@@ -576,6 +561,12 @@ The following option levels and option names and parameters are defined.
   If either CUDA library or CUDA device is not available, endpoint will
   return -FI_EINVAL.
   All providers that support FI_HMEM capability implement this option.
+
+- *FI_OPT_SHARED_MEMORY_PERMITTED - bool \**
+: This option controls the use of shared memory for intra-node communication.
+  Setting it to true will allow the use of shared memory. When set to false,
+  shared memory will not be used and the implementation of intra-node communication
+  is provider dependent.
 
 ## fi_tc_dscp_set
 
@@ -655,20 +646,6 @@ desired.  Supported types are:
   transfer service with flow control that maintains message
   boundaries.
 
-*FI_EP_SOCK_DGRAM*
-: A connectionless, unreliable datagram endpoint with UDP socket-like
-  semantics.  FI_EP_SOCK_DGRAM is most useful for applications designed
-  around using UDP sockets.  See the SOCKET ENDPOINT section for additional
-  details and restrictions that apply to datagram socket endpoints.
-
-*FI_EP_SOCK_STREAM*
-: Data streaming endpoint with TCP socket-like semantics.  Provides
-  a reliable, connection-oriented data transfer service that does
-  not maintain message boundaries.  FI_EP_SOCK_STREAM is most useful for
-  applications designed around using TCP sockets.  See the SOCKET
-  ENDPOINT section for additional details and restrictions that apply
-  to stream endpoints.
-
 *FI_EP_UNSPEC*
 : The type of endpoint is not specified.  This is usually provided as
   input, with other attributes of the endpoint or the provider
@@ -745,6 +722,15 @@ protocol value set to one.
 *FI_PROTO_SM2*
 : Protocol for intra-node communication using shared memory segments
   used by the sm2 provider
+
+*FI_PROTO_CXI*
+: Reliable-datagram protocol optimized for HPC applications
+  used by cxi provider.
+
+*FI_PROTO_CXI_RNR*
+: A version of the FI_PROTO_CXI protocol that implements an RNR
+  protocol which can be used when messaging is primarily expected
+  and FI_ORDER_SAS ordering is not required.
 
 *FI_PROTO_UNSPEC*
 : The protocol is not specified.  This is usually provided as input,
@@ -1262,7 +1248,7 @@ capability bits from the fi_info structure will be used.
 
 The following capabilities apply to the receive attributes: FI_MSG,
 FI_RMA, FI_TAGGED, FI_ATOMIC, FI_REMOTE_READ, FI_REMOTE_WRITE, FI_RECV,
-FI_HMEM, FI_TRIGGER, FI_RMA_PMEM, FI_DIRECTED_RECV, FI_VARIABLE_MSG,
+FI_HMEM, FI_TRIGGER, FI_RMA_PMEM, FI_DIRECTED_RECV,
 FI_MULTI_RECV, FI_SOURCE, FI_RMA_EVENT, FI_SOURCE_ERR, FI_COLLECTIVE,
 and FI_XPU.
 

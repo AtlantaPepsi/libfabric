@@ -1,35 +1,5 @@
-/*
- * Copyright (c) Amazon.com, Inc. or its affiliates.
- * All rights reserved.
- *
- * This software is available to you under a choice of one of two
- * licenses.  You may choose to be licensed under the terms of the GNU
- * General Public License (GPL) Version 2, available from the file
- * COPYING in the main directory of this source tree, or the
- * BSD license below:
- *
- *     Redistribution and use in source and binary forms, with or
- *     without modification, are permitted provided that the following
- *     conditions are met:
- *
- *      - Redistributions of source code must retain the above
- *        copyright notice, this list of conditions and the following
- *        disclaimer.
- *
- *      - Redistributions in binary form must reproduce the above
- *        copyright notice, this list of conditions and the following
- *        disclaimer in the documentation and/or other materials
- *        provided with the distribution.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
- * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
- * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
- * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+/* SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only */
+/* SPDX-FileCopyrightText: Copyright Amazon.com, Inc. or its affiliates. All rights reserved. */
 
 #include "efa.h"
 #include "efa_cq.h"
@@ -461,12 +431,10 @@ int efa_rdm_ep_open(struct fid_domain *domain, struct fi_info *info,
 	efa_rdm_ep->efa_max_outstanding_rx_ops = efa_domain->device->rdm_info->rx_attr->size;
 	efa_rdm_ep->efa_device_iov_limit = efa_domain->device->rdm_info->tx_attr->iov_limit;
 	efa_rdm_ep->use_device_rdma = efa_rdm_get_use_device_rdma(info->fabric_attr->api_version);
+	efa_rdm_ep->shm_permitted = true;
 
 	cq_attr.size = MAX(efa_rdm_ep->rx_size + efa_rdm_ep->tx_size,
 			   efa_env.cq_size);
-
-	if (info->tx_attr->op_flags & FI_DELIVERY_COMPLETE)
-		EFA_INFO(FI_LOG_CQ, "FI_DELIVERY_COMPLETE unsupported\n");
 
 	assert(info->tx_attr->msg_order == info->rx_attr->msg_order);
 	efa_rdm_ep->msg_order = info->rx_attr->msg_order;
@@ -497,6 +465,7 @@ int efa_rdm_ep_open(struct fid_domain *domain, struct fi_info *info,
 
 	efa_rdm_ep->efa_rx_pkts_posted = 0;
 	efa_rdm_ep->efa_rx_pkts_to_post = 0;
+	efa_rdm_ep->efa_rx_pkts_held = 0;
 	efa_rdm_ep->efa_outstanding_tx_ops = 0;
 
 	assert(!efa_rdm_ep->ibv_cq_ex);
@@ -999,9 +968,10 @@ void efa_rdm_ep_update_shm(struct efa_rdm_ep *ep)
 	 * AWS Neuron and Habana Synapse, have no SHM provider
 	 * support anyways, so disabling SHM will not impact them.
 	 */
-	if ((ep->user_info->caps & FI_HMEM)
+	if (((ep->user_info->caps & FI_HMEM)
 	    && hmem_ops[FI_HMEM_CUDA].initialized
-	    && !ep->cuda_api_permitted) {
+	    && !ep->cuda_api_permitted)
+		|| !ep->shm_permitted) {
 		use_shm = false;
 	}
 
@@ -1172,6 +1142,35 @@ static int efa_rdm_ep_set_cuda_api_permitted(struct efa_rdm_ep *ep, bool cuda_ap
 		return -FI_EOPNOTSUPP;
 
 	ep->cuda_api_permitted = false;
+	return 0;
+}
+
+/**
+ * @brief act on shared_memory_permitted flag called by efa_rdm_ep_setopt
+ * @param[in,out]	ep			endpoint
+ * @param[in]		shm_permitted	whether shared memory is permitted
+ * @return		0 on success,
+ *			-FI_EINVAL if shm is requested but the FI_EFA_ENABLE_SHM_TRANSFER environment variable is set to false
+ * @related efa_rdm_ep
+ */
+static int efa_rdm_ep_set_shared_memory_permitted(struct efa_rdm_ep *ep, bool shm_permitted)
+{
+	if (!shm_permitted) {
+		EFA_WARN(FI_LOG_EP_CTRL,
+			 "FI_OPT_SHARED_MEMORY_PERMITTED set to false");
+		ep->shm_permitted = false;
+		return FI_SUCCESS;
+	}
+
+	if (!efa_env.enable_shm_transfer) {
+		EFA_WARN(FI_LOG_EP_CTRL,
+			 "FI_OPT_SHARED_MEMORY_PERMITTED endpoint option set "
+			 "to true but FI_EFA_ENABLE_SHM_TRANSFER environment "
+			 "variable is set to false.");
+		return -FI_EINVAL;
+	}
+
+	ep->shm_permitted = true;
 	return 0;
 }
 
@@ -1362,6 +1361,13 @@ static int efa_rdm_ep_setopt(fid_t fid, int level, int optname,
 		if (optlen != sizeof(bool))
 			return -FI_EINVAL;
 		ret = efa_rdm_ep_set_cuda_api_permitted(efa_rdm_ep, *(bool *)optval);
+		if (ret)
+			return ret;
+		break;
+	case FI_OPT_SHARED_MEMORY_PERMITTED:
+		if (optlen != sizeof(bool))
+			return -FI_EINVAL;
+		ret = efa_rdm_ep_set_shared_memory_permitted(efa_rdm_ep, *(bool *)optval);
 		if (ret)
 			return ret;
 		break;

@@ -12,7 +12,7 @@ from email.mime.base import MIMEBase
 from email import encoders
 
 # add jenkins config location to PATH
-sys.path.append(f"{os.environ['WORKSPACE']}/ci_resources/configs/{os.environ['CLUSTER']}")
+sys.path.append(f"{os.environ['CUSTOM_WORKSPACE']}/ci_resources/configs/{os.environ['CLUSTER']}")
 
 import cloudbees_config
 import argparse
@@ -396,17 +396,34 @@ class OnecclSummarizer(Summarizer):
         self.exists = os.path.exists(self.file_path)
         self.name = 'no_test'
 
+    def read_file(self):
+        with open(self.file_path, 'r') as log_file:
+            self.fast_forward(log_file)
+            for line in log_file:
+                self.check_line(line)
+
     def check_name(self, line):
-        #lines look like path/run_oneccl.sh ..... -test examples ..... test_name
-        if " -test" in line:
-            tokens = line.split()
-            self.name = f"{tokens[tokens.index('-test') + 1]} " \
-                   f"{tokens[len(tokens) - 1]}"
+        #OneCCL GPU tests:
+        if "bash -c" in line and "./run.sh" not in line:
+            tokens = line.split('./')[1]
+            self.name = tokens.split()[0]
+        #OneCCL CPU tests:
+        if "Running" in line and "CCL_LOG_LEVEL=debug" not in line:
+            if './' in line:
+                tokens = line.split('./')[1]
+                self.name = tokens.split()[0]
 
     def check_pass(self, line):
-        if 'passed' in line or "all done" in line:
+        if '[0] PASSED' in line or "All done" in line:
             self.passes += 1
-            self.passed_tests.append(self.name)
+            self.passed_tests.append(f"{self.name}: 1")
+        if ("[0] [  PASSED  ]" in line and "tests." in line) or \
+            ("tests." in line and "[1] [  PASSED  ]" not in line and \
+            "[0] [  PASSED  ]" not in line):
+            token = line.split()
+            no_of_tests = f"{token[token.index('tests.') - 1]} "
+            self.passes += int(no_of_tests)
+            self.passed_tests.append(f"{self.name}: {no_of_tests}")
 
     def check_fail(self, line):
         if 'failed' in line or "exiting with" in line:
@@ -416,120 +433,20 @@ class OnecclSummarizer(Summarizer):
 class ShmemSummarizer(Summarizer):
     def __init__(self, logger, log_dir, prov, file_name, stage_name):
         super().__init__(logger, log_dir, prov, file_name, stage_name)
-        self.shmem_type = {
-            'uh'    : { 'func'      : self.check_uh,
-                        'keyphrase' : 'summary',
-                        'passes'    : 0,
-                        'fails'     : 0
-                      },
-            'isx'   : { 'func'      : self.check_isx,
-                        'keyphrase' : 'scaling',
-                        'passes'    : 0,
-                        'fails'     : 0
-                      },
-            'prk'   : { 'func'      : self.check_prk,
-                        'keyphrase' : 'solution',
-                        'passes'    : 0,
-                        'fails'     : 0
-                      }
-        }
-        self.test_type = 'prk'
-        self.keyphrase = self.shmem_type[self.test_type]['keyphrase']
         self.name = 'no_test'
 
-    def check_uh(self, line, log_file):
-        # (test_002) Running test_shmem_atomics.x: Test all atomics... OK
-        # (test_003) Running test_shmem_barrier.x: Tests barrier ... Failed
-        if "running test_" in line:
-            tokens = line.split()
-            for token in tokens:
-                if 'test_' in token:
-                    self.name = token
-            if tokens[len(tokens) - 1] == 'ok':
-                self.shmem_type[self.test_type]['passes'] += 1
-                self.passed_tests.append(self.name)
-            else:
-                self.shmem_type[self.test_type]['fails'] += 1
-                self.failed_tests.append(self.name)
-        # Summary
-        # x/z Passed.
-        # y/z Failed.
-        if self.keyphrase in line: #double check
-            passed = log_file.readline().lower()
-            failed = log_file.readline().lower()
-            token = int(passed.split()[1].split('/')[0])
-            if self.shmem_type[self.test_type]['passes'] != token:
-                self.logger.log(
-                    f"passes {self.shmem_type[self.test_type]['passes']} do " \
-                    f"not match log reported passes {token}"
-                )
-            token = int(failed.split()[1].split('/')[0])
-            if self.shmem_type[self.test_type]['fails'] != int(token):
-                self.logger.log(
-                    f"fails {self.shmem_type[self.test_type]['fails']} does "\
-                    f"not match log fails {token}"
-                )
+    def check_name(self, line):
+        line = line.strip()
+        if "running " in line:
+            tokens = line.split(' ')
+            self.name = ' '.join(tokens[1:])
 
-    def check_prk(self, line, log_file=None):
-        if self.keyphrase in line:
-            self.shmem_type[self.test_type]['passes'] += 1
-        if 'error:' in line or "exiting with" in line:
-            self.shmem_type[self.test_type]['fails'] += 1
-            p = self.shmem_type[self.test_type]['passes']
-            f = self.shmem_type[self.test_type]['fails']
-            self.failed_tests.append(f"{self.prov} {p + f}")
-        if 'test(s)' in line:
-            token = line.split()[0]
-            if self.fails != int(token):
-                self.logger.log(
-                    f"fails {self.fails} does not match log reported fails " \
-                    f"{token}"
-                )
+    def check_pass(self, line):
+        line = line.strip()
+        if "pass!" in line:
+            self.passes += 1
+            self.passed_tests.append(self.name)
 
-    def check_isx(self, line, log_file=None):
-        if self.keyphrase in line:
-            self.shmem_type[self.test_type]['passes'] += 1
-        if ('failed' in line and 'test(s)' not in line) or \
-            "exiting with" in line:
-            self.shmem_type[self.test_type]['fails'] += 1
-            p = self.shmem_type[self.test_type]['passes']
-            f = self.shmem_type[self.test_type]['fails']
-            self.failed_tests.append(f"{self.prov} {p + f}")
-        if 'test(s)' in line:
-            token = line.split()[0]
-            if int(token) != self.shmem_type[self.test_type]['fails']:
-                self.logger.log(
-                    f"fails {self.shmem_type[self.test_type]['fails']} does " \
-                    f"not match log reported fails {int(token)}"
-                )
-
-    def check_fails(self, line):
-        if "exiting with" in line:
-            self.shmem_type[self.test_type]['fails'] += 1
-            p = self.shmem_type[self.test_type]['passes']
-            f = self.shmem_type[self.test_type]['fails']
-            self.failed_tests.append(f"{self.prov} {p + f}")
-
-    def check_test_type(self, line):
-        if "running shmem" in line:
-            self.test_type = line.split(' ')[2].lower()
-            self.keyphrase = self.shmem_type[self.test_type]['keyphrase']
-
-    def check_line(self, line, log_file):
-        self.check_test_type(line)
-        if self.test_type is not None:
-            self.shmem_type[self.test_type]['func'](line, log_file)
-            self.check_fails(line)
-
-    def read_file(self):
-        with open(self.file_path, 'r') as log_file:
-            super().fast_forward(log_file)
-            for line in log_file:
-                self.check_line(line.lower(), log_file)
-
-        for key in self.shmem_type.keys():
-            self.passes += self.shmem_type[key]['passes']
-            self.fails += self.shmem_type[key]['fails']
 
 class MpichTestSuiteSummarizer(Summarizer):
     def __init__(self, logger, log_dir, prov, mpi, file_name, stage_name):
@@ -768,8 +685,9 @@ class DmabufSummarizer(Summarizer):
                 self.check_type(line)
                 self.check_line(line)
 
-def get_release_num(log_dir):
-    file_name = f'{log_dir}/release_num.txt'
+def get_release_num():
+    file_name = f'{os.environ["CUSTOM_WORKSPACE"]}/source/libfabric/'\
+                'release_num.txt'
     if os.path.exists(file_name):
         with open(file_name) as f:
             num = f.readline()
@@ -782,8 +700,9 @@ def summarize_items(summary_item, logger, log_dir, mode):
     err = 0
     mpi_list = ['impi', 'mpich', 'ompi']
     logger.log(f"Summarizing {mode} build mode:")
+    provs = common.prov_list + [('tcp-iouring', None)]
     if summary_item == 'fabtests' or summary_item == 'all':
-        for prov,util in common.prov_list:
+        for prov,util in provs:
             if util:
                 prov = f'{prov}-{util}'
             ret = FabtestsSummarizer(
@@ -867,7 +786,7 @@ def summarize_items(summary_item, logger, log_dir, mode):
         err += ret if ret else 0
 
     if summary_item == 'shmem' or summary_item == 'all':
-        for prov in ['tcp', 'verbs', 'sockets']:
+        for prov in ['tcp', 'verbs-rxm', 'sockets']:
             ret= ShmemSummarizer(
                 logger, log_dir, prov,
                 f'SHMEM_{prov}_shmem_{mode}',
@@ -877,11 +796,11 @@ def summarize_items(summary_item, logger, log_dir, mode):
 
     if summary_item == 'v3' or summary_item == 'all':
         test_types = ['h2d', 'd2d', 'xd2d']
-        for type in test_types:
+        for t in test_types:
             ret = FabtestsSummarizer(
                 logger, log_dir, 'shm',
-                f'ze_v3_shm_{type}_{mode}',
-                f"ze v3 shm {type} {mode}"
+                f'ze_v3_shm_{t}_fabtests_{mode}',
+                f"ze v3 shm {t} fabtests {mode}"
             ).summarize()
             err += ret if ret else 0
 
@@ -911,17 +830,20 @@ def summarize_items(summary_item, logger, log_dir, mode):
                 ).summarize()
                 err += ret if ret else 0
 
+    if summary_item == 'cuda' or summary_item == 'all':
+        test_types = ['h2d', 'd2d', 'xd2d']
+        for v in range(1, 3):
+            for t in test_types:
+                ret = FabtestsSummarizer(
+                    logger, log_dir, 'shm',
+                    f'cuda_v{v}_shm_{t}_fabtests_{mode}',
+                    f"cuda v{v} shm {t} fabtests {mode}"
+                ).summarize()
+            err += ret if ret else 0
+
     return err
 
 if __name__ == "__main__":
-#read Jenkins environment variables
-    # In Jenkins,  JOB_NAME  = 'ofi_libfabric/master' vs BRANCH_NAME = 'master'
-    # job name is better to use to distinguish between builds of different
-    # jobs but with same branch name.
-    jobname = os.environ['JOB_NAME']
-    buildno = os.environ['BUILD_NUMBER']
-    workspace = os.environ['WORKSPACE']
-
     parser = argparse.ArgumentParser()
     parser.add_argument('--summary_item', help="functional test to summarize",
                          choices=['fabtests', 'imb', 'osu', 'mpichtestsuite',
@@ -945,7 +867,8 @@ if __name__ == "__main__":
     send_mail = args.send_mail
 
     mpi_list = ['impi', 'mpich', 'ompi']
-    log_dir = f'{cloudbees_config.install_dir}/{jobname}/{buildno}/log_dir'
+    custom_workspace = os.environ['CUSTOM_WORKSPACE']
+    log_dir = f'{custom_workspace}/log_dir'
     if (not os.path.exists(log_dir)):
         os.makedirs(log_dir)
 
@@ -954,7 +877,7 @@ if __name__ == "__main__":
     print(f"Files to be summarized: {os.listdir(log_dir)}")
 
     if (release):
-        release_num = get_release_num(log_dir)
+        release_num = get_release_num()
         date = datetime.now().strftime("%Y%m%d%H%M%S")
         output_name = f'summary_{release_num}_{job_name}_{date}.log'
     else:
@@ -981,7 +904,7 @@ if __name__ == "__main__":
             err += summarize_items(summary_item, logger, log_dir, mode)
 
     if (release):
-        shutil.copyfile(f'{full_file_name}', f'{workspace}/{output_name}')
+        shutil.copyfile(f'{full_file_name}', f'{custom_workspace}/{output_name}')
 
     if (send_mail):
         SendEmail(sender = os.environ['SENDER'],

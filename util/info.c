@@ -162,8 +162,6 @@ static int str2mode(char *inputstr, uint64_t *value)
 	ORCASE(FI_ASYNC_IOV);
 	ORCASE(FI_RX_CQ_DATA);
 	ORCASE(FI_LOCAL_MR);
-	ORCASE(FI_NOTIFY_FLAGS_ONLY);
-	ORCASE(FI_RESTRICTED_COMP);
 	ORCASE(FI_CONTEXT2);
 
 	fprintf(stderr, "error: Unrecognized mode: %s\n", inputstr);
@@ -177,8 +175,6 @@ static int str2ep_type(char *inputstr, enum fi_ep_type *value)
 	ORCASE(FI_EP_MSG);
 	ORCASE(FI_EP_DGRAM);
 	ORCASE(FI_EP_RDM);
-	ORCASE(FI_EP_SOCK_STREAM);
-	ORCASE(FI_EP_SOCK_DGRAM);
 
 	fprintf(stderr, "error: Unrecognized endpoint type: %s\n", inputstr);
 

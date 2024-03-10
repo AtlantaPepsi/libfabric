@@ -167,7 +167,6 @@ ssize_t efa_rdm_rma_readmsg(struct fid_ep *ep, const struct fi_msg_rma *msg, uin
 
 	txe = efa_rdm_rma_alloc_txe(efa_rdm_ep, peer, msg, ofi_op_read_req, flags);
 	if (OFI_UNLIKELY(!txe)) {
-		efa_rdm_ep_progress_internal(efa_rdm_ep);
 		err = -FI_EAGAIN;
 		goto out;
 	}
@@ -178,7 +177,7 @@ ssize_t efa_rdm_rma_readmsg(struct fid_ep *ep, const struct fi_msg_rma *msg, uin
 	 * need to check the local ep's capabilities.
 	 */
 	if (!(peer->is_self) && !(peer->flags & EFA_RDM_PEER_HANDSHAKE_RECEIVED)) {
-		err = efa_rdm_ep_trigger_handshake(efa_rdm_ep, txe->addr);
+		err = efa_rdm_ep_trigger_handshake(efa_rdm_ep, txe->peer);
 		err = err ? err : -FI_EAGAIN;
 		goto out;
 	}
@@ -209,13 +208,10 @@ ssize_t efa_rdm_rma_readmsg(struct fid_ep *ep, const struct fi_msg_rma *msg, uin
 		if (OFI_UNLIKELY(err)) {
 			if (err == -FI_ENOBUFS)
 				err = -FI_EAGAIN;
-			efa_rdm_ep_progress_internal(efa_rdm_ep);
 			goto out;
 		}
 	} else {
 		err = efa_rdm_rma_post_efa_emulated_read(efa_rdm_ep, txe);
-		if (OFI_UNLIKELY(err))
-			efa_rdm_ep_progress_internal(efa_rdm_ep);
 	}
 
 out:
@@ -330,16 +326,6 @@ bool efa_rdm_rma_should_write_using_rdma(struct efa_rdm_ep *ep, struct efa_rdm_o
 	    (txe->iov_count > 1 || txe->rma_iov_count > 1))
 		return false;
 
-	/*
-	 * For local write, handshake is not required and
-	 * we just need to check the local ep caps
-	 */
-	if (peer->is_self)
-		return efa_rdm_ep_support_rdma_write(ep);
-
-	/* Check for hardware support of RDMA write.
-	   A handshake should have been made before the check. */
-	assert(peer->flags & EFA_RDM_PEER_HANDSHAKE_RECEIVED);
 	return efa_both_support_rdma_write(ep, peer);
 }
 
@@ -363,7 +349,7 @@ ssize_t efa_rdm_rma_post_write(struct efa_rdm_ep *ep, struct efa_rdm_ope *txe)
 	 * check one-side capability
 	 */
 	if (!(txe->peer->is_self) && !(txe->peer->flags & EFA_RDM_PEER_HANDSHAKE_RECEIVED)) {
-		err = efa_rdm_ep_trigger_handshake(ep, txe->addr);
+		err = efa_rdm_ep_trigger_handshake(ep, txe->peer);
 		return err ? err : -FI_EAGAIN;
 	}
 
@@ -389,7 +375,7 @@ ssize_t efa_rdm_rma_post_write(struct efa_rdm_ep *ep, struct efa_rdm_ope *txe)
 		 * the information whether the peer
 		 * support it or not.
 		 */
-		err = efa_rdm_ep_trigger_handshake(ep, txe->addr);
+		err = efa_rdm_ep_trigger_handshake(ep, txe->peer);
 		if (OFI_UNLIKELY(err))
 			return err;
 
@@ -450,14 +436,12 @@ static inline ssize_t efa_rdm_generic_writemsg(struct efa_rdm_ep *efa_rdm_ep,
 
 	txe = efa_rdm_rma_alloc_txe(efa_rdm_ep, peer, msg, ofi_op_write, flags);
 	if (OFI_UNLIKELY(!txe)) {
-		efa_rdm_ep_progress_internal(efa_rdm_ep);
 		err = -FI_EAGAIN;
 		goto out;
 	}
 
 	err = efa_rdm_rma_post_write(efa_rdm_ep, txe);
 	if (OFI_UNLIKELY(err)) {
-		efa_rdm_ep_progress_internal(efa_rdm_ep);
 		efa_rdm_txe_release(txe);
 	}
 out:

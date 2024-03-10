@@ -1,35 +1,7 @@
-/*
- * Copyright (c) 2013-2015 Intel Corporation, Inc.  All rights reserved.
- * Copyright (c) 2017-2020 Amazon.com, Inc. or its affiliates. All rights reserved.
- *
- * This software is available to you under a choice of one of two
- * licenses.  You may choose to be licensed under the terms of the GNU
- * General Public License (GPL) Version 2, available from the file
- * COPYING in the main directory of this source tree, or the
- * BSD license below:
- *
- *     Redistribution and use in source and binary forms, with or
- *     without modification, are permitted provided that the following
- *     conditions are met:
- *
- *      - Redistributions of source code must retain the above
- *        copyright notice, this list of conditions and the following
- *        disclaimer.
- *
- *      - Redistributions in binary form must reproduce the above
- *        copyright notice, this list of conditions and the following
- *        disclaimer in the documentation and/or other materials
- *        provided with the distribution.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
- * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
- * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
- * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+/* SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only */
+/* SPDX-FileCopyrightText: Copyright (c) 2013-2015 Intel Corporation, Inc.  All rights reserved. */
+/* SPDX-FileCopyrightText: Copyright Amazon.com, Inc. or its affiliates. All rights reserved. */
+
 #include <assert.h>
 #include <ofi_util.h>
 
@@ -47,12 +19,15 @@ struct dlist_entry g_efa_domain_list;
 
 static int efa_domain_close(fid_t fid);
 
+static int efa_domain_ops_open(struct fid *fid, const char *ops_name,
+				uint64_t flags, void **ops, void *context);
+
 static struct fi_ops efa_ops_domain_fid = {
 	.size = sizeof(struct fi_ops),
 	.close = efa_domain_close,
 	.bind = fi_no_bind,
 	.control = fi_no_control,
-	.ops_open = fi_no_ops_open,
+	.ops_open = efa_domain_ops_open,
 };
 
 static struct fi_ops_domain efa_ops_domain_dgram = {
@@ -380,3 +355,77 @@ static int efa_domain_close(fid_t fid)
 	return 0;
 }
 
+/**
+ * @brief Query EFA specific Memory Region attributes
+ *
+ * @param mr ptr to fid_mr
+ * @param mr_attr  ptr to fi_efa_mr_attr
+ * @return int 0 on success, negative integer on failure
+ */
+#if HAVE_EFADV_QUERY_MR
+
+static int
+efa_domain_query_mr(struct fid_mr *mr_fid, struct fi_efa_mr_attr *mr_attr)
+{
+	struct efadv_mr_attr attr = {0};
+	struct efa_mr *efa_mr;
+	int ret;
+
+	memset(mr_attr, 0, sizeof(*mr_attr));
+
+	efa_mr = container_of(mr_fid, struct efa_mr, mr_fid);
+	ret = efadv_query_mr(efa_mr->ibv_mr, &attr, sizeof(attr));
+	if (ret) {
+		EFA_WARN(FI_LOG_DOMAIN, "efadv_query_mr failed. err: %d\n", ret);
+		return ret;
+	}
+
+	/* Translate the validity masks and bus_id from efadv_mr_attr to fi_efa_mr_attr */
+	if (attr.ic_id_validity & EFADV_MR_ATTR_VALIDITY_RECV_IC_ID) {
+		mr_attr->recv_ic_id = attr.recv_ic_id;
+		mr_attr->ic_id_validity |= FI_EFA_MR_ATTR_RECV_IC_ID;
+	}
+
+	if (attr.ic_id_validity & EFADV_MR_ATTR_VALIDITY_RDMA_READ_IC_ID) {
+		mr_attr->rdma_read_ic_id = attr.rdma_read_ic_id;
+		mr_attr->ic_id_validity |= FI_EFA_MR_ATTR_RDMA_READ_IC_ID;
+	}
+
+	if (attr.ic_id_validity & EFADV_MR_ATTR_VALIDITY_RDMA_RECV_IC_ID) {
+		mr_attr->rdma_recv_ic_id = attr.rdma_recv_ic_id;
+		mr_attr->ic_id_validity |= FI_EFA_MR_ATTR_RDMA_RECV_IC_ID;
+	}
+
+	return FI_SUCCESS;
+}
+
+#else
+
+static int
+efa_domain_query_mr(struct fid_mr *mr, struct fi_efa_mr_attr *mr_attr)
+{
+	return -FI_ENOSYS;
+}
+
+#endif /* HAVE_EFADV_QUERY_MR */
+
+static struct fi_efa_ops_domain efa_ops_domain = {
+	.query_mr = efa_domain_query_mr,
+};
+
+static int
+efa_domain_ops_open(struct fid *fid, const char *ops_name, uint64_t flags,
+		     void **ops, void *context)
+{
+	int ret = FI_SUCCESS;
+
+	if (strcmp(ops_name, FI_EFA_DOMAIN_OPS) == 0) {
+		*ops = &efa_ops_domain;
+	} else {
+		EFA_WARN(FI_LOG_DOMAIN,
+			"Unknown ops name: %s\n", ops_name);
+		ret = -FI_EINVAL;
+	}
+
+	return ret;
+}

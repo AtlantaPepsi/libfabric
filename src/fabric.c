@@ -445,7 +445,7 @@ static struct fi_provider *ofi_get_hook(const char *name)
 static void ofi_ordered_provs_init(void)
 {
 	char *ordered_prov_names[] = {
-		"efa", "psm2", "opx", "verbs",
+		"efa", "psm2", "opx", "verbs", "cxi",
 		"netdir", "psm3", "ucx", "ofi_rxm", "ofi_rxd", "shm",
 
 		/* Initialize the socket based providers last of the
@@ -545,6 +545,7 @@ static void ofi_register_provider(struct fi_provider *provider, void *dlhandle)
 	    !strcasecmp(provider->name, "efa") ||
 	    !strcasecmp(provider->name, "psm3") ||
 	    !strcasecmp(provider->name, "ucx") ||
+	    !strcasecmp(provider->name, "cxi") ||
 	    ofi_is_util_prov(provider))
 		ofi_prov_ctx(provider)->disable_layering = true;
 
@@ -636,7 +637,7 @@ void ofi_create_filter(struct ofi_filter *filter, const char *raw_filter)
 }
 
 #ifdef HAVE_LIBDL
-static void ofi_reg_dl_prov(const char *lib)
+static void ofi_reg_dl_prov(const char *lib, bool lib_known_to_exist)
 {
 	void *dlhandle;
 	struct fi_provider* (*inif)(void);
@@ -645,8 +646,13 @@ static void ofi_reg_dl_prov(const char *lib)
 
 	dlhandle = dlopen(lib, RTLD_NOW);
 	if (dlhandle == NULL) {
-		FI_DBG(&core_prov, FI_LOG_CORE,
-			"dlopen(%s): %s\n", lib, dlerror());
+		if (lib_known_to_exist) {
+			FI_WARN(&core_prov, FI_LOG_CORE,
+				"dlopen(%s): %s\n", lib, dlerror());
+		} else {
+			FI_DBG(&core_prov, FI_LOG_CORE,
+				"dlopen(%s): %s\n", lib, dlerror());
+		}
 		return;
 	}
 
@@ -675,7 +681,7 @@ static void ofi_ini_dir(const char *dir)
 			       "asprintf failed to allocate memory\n");
 			goto libdl_done;
 		}
-		ofi_reg_dl_prov(lib);
+		ofi_reg_dl_prov(lib, true);
 
 		free(liblist[n]);
 		free(lib);
@@ -716,7 +722,7 @@ static void ofi_find_prov_libs(void)
 			continue;
 		}
 
-		ofi_reg_dl_prov(lib);
+		ofi_reg_dl_prov(lib, false);
 		free(lib);
 	}
 }
@@ -898,6 +904,7 @@ void fi_ini(void)
 
 	ofi_register_provider(PSM3_INIT, NULL);
 	ofi_register_provider(PSM2_INIT, NULL);
+	ofi_register_provider(CXI_INIT, NULL);
 	ofi_register_provider(SHM_INIT, NULL);
 	ofi_register_provider(SM2_INIT, NULL);
 
@@ -1471,6 +1478,9 @@ int DEFAULT_SYMVER_PRE(fi_fabric)(struct fi_fabric_attr *attr,
 {
 	struct ofi_prov *prov;
 	const char *top_name;
+#ifdef HAVE_LIBDL
+	Dl_info dl_info;
+#endif
 	int ret;
 
 	if (!attr || !attr->prov_name || !attr->name)
@@ -1499,6 +1509,16 @@ int DEFAULT_SYMVER_PRE(fi_fabric)(struct fi_fabric_attr *attr,
 			attr->name);
 
 		ofi_hook_install(*fabric, fabric, prov->provider);
+
+#ifdef HAVE_LIBDL
+		if (dladdr(prov->provider->fabric, &dl_info))
+			FI_INFO(&core_prov, FI_LOG_CORE,
+				"Using %s provider %u.%u, path:%s\n",
+				prov->prov_name,
+				FI_MAJOR(prov->provider->fi_version),
+				FI_MINOR(prov->provider->fi_version),
+				dl_info.dli_fname);
+#endif
 	}
 
 	return ret;

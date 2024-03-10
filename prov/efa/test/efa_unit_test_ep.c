@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only */
+/* SPDX-FileCopyrightText: Copyright Amazon.com, Inc. or its affiliates. All rights reserved. */
+
 #include "efa_unit_tests.h"
 
 /**
@@ -84,7 +87,7 @@ void test_efa_rdm_ep_ignore_non_hex_host_id(struct efa_resource **state)
  *	the packet header and set the peer host id if HOST_ID_HDR is turned on.
  *	Then the endpoint should respond with a handshake packet, and include the local host id
  *	if and only if it is non-zero.
- * 
+ *
  * @param[in]	state		cmocka state variable
  * @param[in]	local_host_id	The local host id
  * @param[in]	peer_host_id	The remote peer host id
@@ -116,9 +119,12 @@ void test_efa_rdm_ep_handshake_exchange_host_id(struct efa_resource **state, uin
 	efa_rdm_ep = container_of(resource->ep, struct efa_rdm_ep, base_ep.util_ep.ep_fid);
 	efa_rdm_ep->host_id = g_efa_unit_test_mocks.local_host_id;
 	/* close shm_ep to force efa_rdm_ep to use efa device to send */
-	ret = fi_close(&efa_rdm_ep->shm_ep->fid);
-	assert_int_equal(ret, 0);
-	efa_rdm_ep->shm_ep = NULL;
+	if (efa_rdm_ep->shm_ep) {
+		ret = fi_close(&efa_rdm_ep->shm_ep->fid);
+		assert_int_equal(ret, 0);
+		efa_rdm_ep->shm_ep = NULL;
+	}
+
 
 	/* Create and register a fake peer */
 	assert_int_equal(fi_getname(&resource->ep->fid, &raw_addr, &raw_addr_len), 0);
@@ -133,9 +139,18 @@ void test_efa_rdm_ep_handshake_exchange_host_id(struct efa_resource **state, uin
 	assert_int_equal(peer->host_id, 0);
 	assert_int_not_equal(peer->flags & EFA_RDM_PEER_HANDSHAKE_SENT, EFA_RDM_PEER_HANDSHAKE_SENT);
 
-	/* Setup rx packet entry. Manually increase counter to avoid underflow */
+	/*
+	 * The rx pkt entry should only be allocated and posted by the progress engine.
+	 * However, to mock a receive completion, we have to allocate an rx entry
+	 * and modify it out of band. The proess engine grow the rx pool in the first
+	 * call and set efa_rdm_ep->efa_rx_pkts_posted as the rx pool size. Here we
+	 * follow the progress engine to set the efa_rx_pkts_posted counter manually
+	 * TODO: modify the rx pkt as part of the ibv cq poll mock so we don't have to
+	 * allocate pkt entry and hack the pkt counters.
+	 */
 	pkt_entry = efa_rdm_pke_alloc(efa_rdm_ep, efa_rdm_ep->efa_rx_pkt_pool, EFA_RDM_PKE_FROM_EFA_RX_POOL);
-	efa_rdm_ep->efa_rx_pkts_posted++;
+	assert_non_null(pkt_entry);
+	efa_rdm_ep->efa_rx_pkts_posted = efa_rdm_ep_get_rx_pool_size(efa_rdm_ep);
 
 	pkt_attr.connid = include_connid ? raw_addr.qkey : 0;
 	pkt_attr.host_id = g_efa_unit_test_mocks.peer_host_id;
@@ -373,9 +388,11 @@ void test_efa_rdm_ep_dc_atomic_error_handling(struct efa_resource **state)
 
 	efa_rdm_ep = container_of(resource->ep, struct efa_rdm_ep, base_ep.util_ep.ep_fid);
 	/* close shm_ep to force efa_rdm_ep to use efa device to send */
-	err = fi_close(&efa_rdm_ep->shm_ep->fid);
-	assert_int_equal(err, 0);
-	efa_rdm_ep->shm_ep = NULL;
+	if (efa_rdm_ep->shm_ep) {
+		err = fi_close(&efa_rdm_ep->shm_ep->fid);
+		assert_int_equal(err, 0);
+		efa_rdm_ep->shm_ep = NULL;
+	}
 	/* set peer->flag to EFA_RDM_PEER_REQ_SENT will make efa_rdm_atomic() think
 	 * a REQ packet has been sent to the peer (so no need to send again)
 	 * handshake has not been received, so we do not know whether the peer support DC
@@ -453,7 +470,7 @@ void test_efa_rdm_ep_rma_without_caps(struct efa_resource **state)
 	resource->hints->caps |= FI_MSG | FI_TAGGED;
 	resource->hints->caps &= ~FI_RMA;
 	resource->hints->domain_attr->mr_mode = FI_MR_BASIC;
-	efa_unit_test_resource_construct_with_hints(resource, FI_EP_RDM, resource->hints);
+	efa_unit_test_resource_construct_with_hints(resource, FI_EP_RDM, resource->hints, true);
 
 	/* ensure we don't have RMA capability. */
 	efa_rdm_ep = container_of(resource->ep, struct efa_rdm_ep, base_ep.util_ep.ep_fid);
@@ -503,7 +520,7 @@ void test_efa_rdm_ep_atomic_without_caps(struct efa_resource **state)
 	resource->hints->caps |= FI_MSG | FI_TAGGED;
 	resource->hints->caps &= ~FI_ATOMIC;
 	resource->hints->domain_attr->mr_mode = FI_MR_BASIC;
-	efa_unit_test_resource_construct_with_hints(resource, FI_EP_RDM, resource->hints);
+	efa_unit_test_resource_construct_with_hints(resource, FI_EP_RDM, resource->hints, true);
 
 	/* ensure we don't have ATOMIC capability. */
 	efa_rdm_ep = container_of(resource->ep, struct efa_rdm_ep, base_ep.util_ep.ep_fid);
@@ -575,4 +592,25 @@ void test_efa_rdm_ep_getopt_undersized_optlen(struct efa_resource **state)
 void test_efa_rdm_ep_getopt_oversized_optlen(struct efa_resource **state)
 {
 	test_efa_rdm_ep_getopt(state, 16, FI_SUCCESS);
+}
+
+void test_efa_rdm_ep_setopt_shared_memory_permitted(struct efa_resource **state)
+{
+	struct efa_resource *resource = *state;
+	struct efa_rdm_ep *ep;
+	bool optval = false;
+
+	efa_unit_test_resource_construct_ep_not_enabled(resource, FI_EP_RDM);
+
+	ep = container_of(resource->ep, struct efa_rdm_ep,
+			  base_ep.util_ep.ep_fid);
+
+	assert_int_equal(fi_setopt(&resource->ep->fid, FI_OPT_ENDPOINT,
+				   FI_OPT_SHARED_MEMORY_PERMITTED, &optval,
+				   sizeof(optval)),
+			 0);
+
+	assert_int_equal(fi_enable(resource->ep), 0);
+
+	assert_null(ep->shm_ep);
 }
