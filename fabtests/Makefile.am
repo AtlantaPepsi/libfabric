@@ -537,6 +537,8 @@ component_dmabuf_rdma_rocr_rdmabw_CFLAGS = \
 component_dmabuf_rdma_rocr_mr_reg_SOURCES = \
 	component/dmabuf-rdma/mr-reg-rocr.c \
 	component/dmabuf-rdma/util.h \
+	component/dmabuf-rdma/rocr.c \
+	component/dmabuf-rdma/rocr.h \
 	component/dmabuf-rdma/dmabuf_reg.c \
 	component/dmabuf-rdma/dmabuf_reg.h
 

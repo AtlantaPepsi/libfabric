@@ -123,26 +123,60 @@ err_out:
 
 void reg_dmabuf_mr(void)
 {
+	struct iovec iov;
+	iov.iov_base = buf;
+	iov.iov_len = buf_size;
+
+	int fd = -1;
+	int offset = -1;
+
+	hsa_amd_portable_export_dmabuf(buf, buf_size, &fd, &offset);
+
+//approach 1 with FI_MR_DMABUF
+
 	struct fi_mr_dmabuf dmabuf = {
-		//.fd = rocr_get_buf_fd(buf),
+		.fd = fd,
 		.offset = 0,
 		.len = buf_size,
 		.base_addr = NULL,
 	};
+	printf("offset %zu, base %p, dmabuf %p\n",offset,dmabuf.base_addr, &dmabuf);
 	struct fi_mr_attr mr_attr = {
 		.dmabuf = &dmabuf,
+		//.mr_iov = &iov,
+		//.iov_count = 1,
 		.access = FI_REMOTE_READ | FI_REMOTE_WRITE,
 		.requested_key = 2,
 	};
+	mr_attr.dmabuf = &dmabuf; // necessary
+	printf("offset %zu, base %p, dmabuf %p\n",mr_attr.dmabuf->offset,mr_attr.dmabuf->base_addr,mr_attr.dmabuf);
 
-	CHECK_ERROR(fi_mr_regattr(domain, &mr_attr, FI_MR_DMABUF, &dmabuf_mr));
+	printf("do\n");
+	CHECK_ERROR(fi_mr_regattr(domain, &mr_attr,FI_MR_DMABUF, &dmabuf_mr));
+	printf("done\n");
+
+
+
+//approach2 with HMEM (flag = 0
+/*
+        struct fi_mr_attr mr_attr = {
+                //.dmabuf = &dmabuf,
+                .mr_iov = &iov,
+                .iov_count = 1,
+                .access = FI_REMOTE_READ | FI_REMOTE_WRITE,
+                .requested_key = 2,
+		.iface = FI_HMEM_ROCR,
+        };
+	CHECK_ERROR(fi_mr_regattr(domain, &mr_attr,0, &dmabuf_mr));
+*/
+
 
 	if (fi->domain_attr->mr_mode & FI_MR_ENDPOINT) {
 		CHECK_ERROR(fi_mr_bind(dmabuf_mr, &ep->fid, 0));
 		CHECK_ERROR(fi_mr_enable(dmabuf_mr));
 	}
 
-	printf("mr %p, buf %p, rkey 0x%lx, len %zd\n",
+	printf("mr dma %p, buf %p, rkey 0x%lx, len %zd\n",
 		dmabuf_mr, buf, fi_mr_key(dmabuf_mr), buf_size);
 
 err_out:

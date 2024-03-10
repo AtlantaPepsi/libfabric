@@ -7,7 +7,7 @@
 #include "rocr.h"
 
 /*
- * Memory allocation & copy routines using oneAPI L0
+ * Memory allocation & copy routines using ROCRr HSA calls
  */
 
 extern int buf_location;
@@ -84,6 +84,7 @@ int rocr_init(char *gpu_dev_nums, int enable_multi_gpu)
 	if (hsa_ret != HSA_STATUS_SUCCESS) {
 		printf("Failed to find GPU agent\n");
 	}
+	num_gpus= 1;
     	return num_gpus;
 }
 
