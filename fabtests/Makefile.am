@@ -70,9 +70,13 @@ bin_PROGRAMS = \
 	regression/sighandler_test \
 	common/check_hmem
 
+if HAVE_ROCR_DEVEL
+if HAVE_VERBS_DEVEL
 bin_PROGRAMS += \
 	component/dmabuf-rdma/fi_rocr_mr_reg \
-	component/dmabuf-rdma/fi_rocr_rdmabw 
+	component/dmabuf-rdma/fi_rocr_rdmabw
+endif HAVE_VERBS_DEVEL
+endif HAVE_ROCR_DEVEL
 
 if HAVE_ZE_DEVEL
 if HAVE_VERBS_DEVEL
@@ -516,7 +520,8 @@ component_sock_test_CFLAGS = \
 	$(AM_CFLAGS)
 
 #rocr
-
+if HAVE_ROCR_DEVEL
+if HAVE_VERBS_DEVEL
 component_dmabuf_rdma_fi_rocr_rdmabw_SOURCES = \
 	component/dmabuf-rdma/fi-rdmabw-rocr.c \
 	component/dmabuf-rdma/ofi_ctx_pool.h \
@@ -547,6 +552,8 @@ component_dmabuf_rdma_fi_rocr_mr_reg_LDADD = libfabtests.la
 component_dmabuf_rdma_fi_rocr_mr_reg_CFLAGS = \
 	$(AM_CFLAGS) \
 	-I$(srcdir)/component/dmabuf-rdma
+endif HAVE_VERBS_DEVEL
+endif HAVE_ROCR_DEVEL
 
 
 if HAVE_ZE_DEVEL
