@@ -200,6 +200,29 @@ AC_HEADER_STDC
 AC_CHECK_HEADER([rdma/fabric.h], [],
     [AC_MSG_ERROR([<rdma/fabric.h> not found.  fabtests requires libfabric.])])
 
+AC_ARG_WITH([rocr],
+            AS_HELP_STRING([--with-rocr], [Use non-default ROCR location - default NO]),
+            AS_IF([test x"$withval" != x"no"],
+		  [CPPFLAGS="-I$withval/include $CPPFLAGS"
+		   LDFLAGS="-L$withval/$lib $LDFLAGS"]))
+
+dnl Checks for ROCR support. Require fabtests to dlopen ROCR libraries
+have_rocr=0
+AS_IF([test x"$with_rocr" != x"no"],
+      [
+            AC_CHECK_LIB(dl, dlopen, [], [AC_MSG_ERROR([dlopen not found.])])
+            AC_CHECK_HEADER([hsa/hsa_ext_amd.h], [have_rocr=1])
+      ])
+
+AS_IF([test x"$with_rocr" != x"no" && test -n "$with_rocr" && test "$have_rocr" = "0" ],
+	[AC_MSG_ERROR([ROCR support requested but HSA runtime not available.])],
+	[])
+
+AC_DEFINE_UNQUOTED([HAVE_ROCR], [$have_rocr], [ROCR support])
+
+dnl Checks for presence of ROCR library. Needed for building dmabuf rdma component tests.
+AM_CONDITIONAL([HAVE_ROCR_DEVEL], [test $have_rocr -eq 1])
+
 AC_ARG_WITH([ze],
             AS_HELP_STRING([--with-ze], [Use non-default ZE location - default NO]),
             AS_IF([test x"$withval" != x"no"],
