@@ -19,7 +19,7 @@ bool efa_rdm_get_use_device_rdma(uint32_t fabric_api_version);
 
 void efa_rdm_get_desc_for_shm(int numdesc, void **efa_desc, void **shm_desc);
 
-int efa_rdm_write_error_msg(struct efa_rdm_ep *ep, fi_addr_t addr, int err, int prov_errno, void **buf, size_t *buflen);
+int efa_rdm_write_error_msg(struct efa_rdm_ep *ep, fi_addr_t addr, int prov_errno, void **buf, size_t *buflen);
 
 #ifdef ENABLE_EFA_POISONING
 static inline void efa_rdm_poison_mem_region(void *ptr, size_t size)
@@ -29,5 +29,11 @@ static inline void efa_rdm_poison_mem_region(void *ptr, size_t size)
 		memcpy((uint32_t *)ptr + i, &efa_rdm_poison_value, sizeof(efa_rdm_poison_value));
 }
 #endif
+
+static inline
+bool efa_rdm_use_unsolicited_write_recv()
+{
+	return efa_env.use_unsolicited_write_recv && efa_device_support_unsolicited_write_recv();
+}
 
 #endif /* _EFA_RDM_UTIL_H */

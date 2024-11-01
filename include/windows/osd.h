@@ -205,6 +205,9 @@ extern "C" {
 #ifndef ESTALE
 # define ESTALE			246	/* Stale NFS file handle */
 #endif
+#ifndef EREMOTEIO
+# define EREMOTEIO		247	/* Remote I/O error */
+#endif
 
 /* MSG_NOSIGNAL doesn't exist on Windows */
 #ifndef MSG_NOSIGNAL
@@ -1005,6 +1008,7 @@ size_t ofi_ifaddr_get_speed(struct ifaddrs *ifa);
 
 #define file2unix_time	10000000i64
 #define win2unix_epoch	116444736000000000i64
+#define CLOCK_REALTIME 0
 #define CLOCK_MONOTONIC 1
 
 /* Own implementation of clock_gettime*/
@@ -1050,12 +1054,16 @@ static inline ofi_complex_## type ofi_complex_prod_## type	\
 	res.imag = a.real * b.imag + a.imag * b.real;		\
 	return res;						\
 }								\
+static bool ofi_complex_is_true_## type (ofi_complex_ ## type a)\
+{								\
+	return a.real != 0 || a.imag != 0;			\
+}								\
 static inline ofi_complex_## type ofi_complex_land_## type	\
 	(ofi_complex_## type a, ofi_complex_## type b)		\
 {								\
 	ofi_complex_## type res;				\
-	res.real = (type)(((a.real != 0) || (a.imag != 0)) &&	\
-		((b.real != 0) || (b.imag != 0)));		\
+	res.real = (type)(ofi_complex_is_true_## type (a) &&	\
+			  ofi_complex_is_true_## type (b));	\
 	res.imag = 0;						\
 	return res;						\
 }								\
@@ -1063,8 +1071,8 @@ static inline ofi_complex_## type ofi_complex_lor_## type	\
 	(ofi_complex_## type a, ofi_complex_## type b)		\
 {								\
 	ofi_complex_## type res;				\
-	res.real = (type)(((a.real != 0) || (a.imag != 0)) &&	\
-		((b.real != 0) || (b.imag != 0)));		\
+	res.real = (type)(ofi_complex_is_true_## type (a) ||	\
+			  ofi_complex_is_true_## type (b));	\
 	res.imag = 0;						\
 	return res;						\
 }								\
@@ -1072,10 +1080,10 @@ static inline ofi_complex_## type ofi_complex_lxor_## type	\
 	(ofi_complex_## type a, ofi_complex_## type b)		\
 {								\
 	ofi_complex_## type res;				\
-	res.real = (type)((((a.real != 0) || (a.imag != 0)) &&	\
-		    !((b.real != 0) || (b.imag != 0))) ||	\
-		   (!((a.real != 0) || (a.imag != 0)) &&	\
-		    ((b.real != 0) || (b.imag != 0))));		\
+	res.real = (type)((ofi_complex_is_true_## type (a) &&	\
+			   !ofi_complex_is_true_## type (b))) || \
+			  (!ofi_complex_is_true_## type (a) &&	\
+			   ofi_complex_is_true_## type (b));	\
 	res.imag = 0;						\
 	return res;						\
 }

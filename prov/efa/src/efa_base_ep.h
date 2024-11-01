@@ -12,6 +12,8 @@
 #include "ofi_util.h"
 #include "rdm/efa_rdm_protocol.h"
 
+#define EFA_QP_DEFAULT_SERVICE_LEVEL 8
+
 struct efa_qp {
 	struct ibv_qp *ibv_qp;
 	struct ibv_qp_ex *ibv_qp_ex;
@@ -30,9 +32,8 @@ struct efa_recv_wr {
 	 *
 	 * @details
 	 * EFA device supports a maximum of 2 iov/SGE
-	 * For receive, we only use 1 SGE
 	 */
-	struct ibv_sge sge[1];
+	struct ibv_sge sge[2];
 };
 
 struct efa_base_ep {
@@ -47,12 +48,16 @@ struct efa_base_ep {
 
 	bool util_ep_initialized;
 	bool efa_qp_enabled;
+	bool is_wr_started;
 
 	struct ibv_send_wr xmit_more_wr_head;
 	struct ibv_send_wr *xmit_more_wr_tail;
 	struct ibv_recv_wr recv_more_wr_head;
 	struct ibv_recv_wr *recv_more_wr_tail;
 	struct efa_recv_wr *efa_recv_wr_vec;
+
+	/* Only used by RDM ep type */
+	struct efa_qp *user_recv_qp; /* Separate qp to receive pkts posted by users */
 };
 
 int efa_base_ep_bind_av(struct efa_base_ep *base_ep, struct efa_av *av);
@@ -69,7 +74,9 @@ int efa_base_ep_construct(struct efa_base_ep *base_ep,
 
 int efa_base_ep_getname(fid_t fid, void *addr, size_t *addrlen);
 
-int efa_qp_create(struct efa_qp **qp, struct ibv_qp_init_attr_ex *init_attr_ex);
+int efa_qp_create(struct efa_qp **qp, struct ibv_qp_init_attr_ex *init_attr_ex, uint32_t tclass);
+
+void efa_qp_destruct(struct efa_qp *qp);
 
 int efa_base_ep_create_qp(struct efa_base_ep *base_ep,
 			  struct ibv_qp_init_attr_ex *init_attr_ex);

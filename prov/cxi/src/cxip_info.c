@@ -1,7 +1,7 @@
 /*
  * SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only
  *
- * Copyright (c) 2019,2022 Hewlett Packard Enterprise Development LP
+ * Copyright (c) 2019,2022-2024 Hewlett Packard Enterprise Development LP
  */
 
 /* CXI fabric discovery implementation. */
@@ -270,8 +270,6 @@ struct fi_rx_attr cxip_rx_attr = {
 	.caps = CXIP_EP_CAPS & ~OFI_IGNORED_RX_CAPS,
 	.op_flags = CXIP_RX_OP_FLAGS,
 	.msg_order = CXIP_MSG_ORDER,
-	.comp_order = FI_ORDER_NONE,
-	.total_buffered_recv = CXIP_UX_BUFFER_SIZE,
 	.size = CXIP_MAX_RX_SIZE,
 	.iov_limit = 1,
 };
@@ -290,8 +288,6 @@ struct fi_rx_attr cxip_multi_auth_key_rx_attr = {
 	.caps = CXIP_EP_CAPS & ~OFI_IGNORED_RX_CAPS & ~FI_DIRECTED_RECV,
 	.op_flags = CXIP_RX_OP_FLAGS,
 	.msg_order = CXIP_MSG_ORDER,
-	.comp_order = FI_ORDER_NONE,
-	.total_buffered_recv = CXIP_UX_BUFFER_SIZE,
 	.size = CXIP_MAX_RX_SIZE,
 	.iov_limit = 1,
 };
@@ -390,13 +386,13 @@ struct util_prov cxip_util_prov = {
 	.flags = 0,
 };
 
-int s_page_size;
+int sc_page_size;
 
 /* Get _SC_PAGESIZE */
 static void set_system_page_size(void)
 {
-	if (!s_page_size)
-		s_page_size = sysconf(_SC_PAGESIZE);
+	if (!sc_page_size)
+		sc_page_size = sysconf(_SC_PAGESIZE);
 }
 
 /*
@@ -612,8 +608,6 @@ struct cxip_environment cxip_env = {
 	.force_odp = false,
 	.ats = false,
 	.iotlb = true,
-	.disable_dmabuf_cuda = false,
-	.disable_dmabuf_rocr = false,
 	.ats_mlock_mode = CXIP_ATS_MLOCK_ALL,
 	.fork_safe_requested = false,
 	.rx_match_mode = CXIP_PTLTE_DEFAULT_MODE,
@@ -665,12 +659,17 @@ struct cxip_environment cxip_env = {
 	.coll_fabric_mgr_url = NULL,
 	.coll_retry_usec = CXIP_COLL_MAX_RETRY_USEC,
 	.coll_timeout_usec = CXIP_COLL_MAX_TIMEOUT_USEC,
+	.coll_fm_timeout_msec = CXIP_COLL_DFL_FM_TIMEOUT_MSEC,
 	.coll_use_dma_put = false,
 	.telemetry_rgid = -1,
 	.disable_hmem_dev_register = 0,
 	.ze_hmem_supported = 0,
 	.rdzv_proto = CXIP_RDZV_PROTO_DEFAULT,
 	.enable_trig_op_limit = false,
+	.mr_cache_events_disable_poll_nsecs =
+		CXIP_MR_CACHE_EVENTS_DISABLE_POLL_NSECS,
+	.mr_cache_events_disable_le_poll_nsecs =
+		CXIP_MR_CACHE_EVENTS_DISABLE_LE_POLL_NSECS,
 };
 
 static void cxip_env_init(void)
@@ -769,17 +768,17 @@ static void cxip_env_init(void)
 			"Enables the NIC IOTLB (default %d).", cxip_env.iotlb);
 	fi_param_get_bool(&cxip_prov, "iotlb", &cxip_env.iotlb);
 
-	fi_param_define(&cxip_prov, "disable_dmabuf_cuda", FI_PARAM_BOOL,
-			"Disables the DMABUF interface for CUDA (default %d).",
-			cxip_env.disable_dmabuf_cuda);
-	fi_param_get_bool(&cxip_prov, "disable_dmabuf_cuda",
-			  &cxip_env.disable_dmabuf_cuda);
+	/* Use ROCR DMABUF by default - honors the env if already set */
+	ret = setenv("FI_HMEM_ROCR_USE_DMABUF", "1", 0);
+	if (ret)
+		CXIP_INFO("Could not enable FI_HMEM_ROCR_USE_DMABUF ret:%d %s\n",
+			  ret, fi_strerror(errno));
 
-	fi_param_define(&cxip_prov, "disable_dmabuf_rocr", FI_PARAM_BOOL,
-			"Disables the DMABUF interface for ROCR (default %d).",
-			cxip_env.disable_dmabuf_rocr);
-	fi_param_get_bool(&cxip_prov, "disable_dmabuf_rocr",
-			  &cxip_env.disable_dmabuf_rocr);
+	/* Disable cuda DMABUF by default - honors the env if already set */
+	ret = setenv("FI_HMEM_CUDA_USE_DMABUF", "0", 0);
+	if (ret)
+		CXIP_INFO("Could not disable FI_HMEM_CUDA_USE_DMABUF ret:%d %s\n",
+			  ret, fi_strerror(errno));
 
 	fi_param_define(&cxip_prov, "ats_mlock_mode", FI_PARAM_STRING,
 			"Sets ATS mlock mode (off | all).");
@@ -833,27 +832,8 @@ static void cxip_env_init(void)
 
 	fi_param_define(&cxip_prov, "rx_match_mode", FI_PARAM_STRING,
 			"Sets RX message match mode (hardware | software | hybrid).");
-	fi_param_get_str(&cxip_prov, "rx_match_mode", &param_str);
 
-	if (param_str) {
-		if (!strcasecmp(param_str, "hardware")) {
-			cxip_env.rx_match_mode = CXIP_PTLTE_HARDWARE_MODE;
-			cxip_env.msg_offload = true;
-		} else if (!strcmp(param_str, "software")) {
-			cxip_env.rx_match_mode = CXIP_PTLTE_SOFTWARE_MODE;
-			cxip_env.msg_offload = false;
-		} else if (!strcmp(param_str, "hybrid")) {
-			cxip_env.rx_match_mode = CXIP_PTLTE_HYBRID_MODE;
-			cxip_env.msg_offload = true;
-		} else {
-			CXIP_WARN("Unrecognized rx_match_mode: %s\n",
-				  param_str);
-			cxip_env.rx_match_mode = CXIP_PTLTE_HARDWARE_MODE;
-			cxip_env.msg_offload = true;
-		}
-
-		param_str = NULL;
-	}
+	cxip_set_env_rx_match_mode();
 
 	fi_param_define(&cxip_prov, "rdzv_threshold", FI_PARAM_SIZE_T,
 			"Message size threshold for rendezvous protocol.");
@@ -1041,54 +1021,6 @@ static void cxip_env_init(void)
 	fi_param_get_size_t(&cxip_prov, "req_buf_max_cached",
 			    &cxip_env.req_buf_max_cached);
 
-	/* Parameters to tailor hybrid hardware to software transitions
-	 * that are initiated by software.
-	 */
-	fi_param_define(&cxip_prov, "hybrid_preemptive", FI_PARAM_BOOL,
-			"Enable/Disable low LE preemptive UX transitions.");
-	fi_param_get_bool(&cxip_prov, "hybrid_preemptive",
-			  &cxip_env.hybrid_preemptive);
-	if (cxip_env.rx_match_mode != CXIP_PTLTE_HYBRID_MODE &&
-	    cxip_env.hybrid_preemptive) {
-		cxip_env.hybrid_preemptive = false;
-		CXIP_WARN("Not in hybrid mode, ignoring preemptive\n");
-	}
-
-	fi_param_define(&cxip_prov, "hybrid_recv_preemptive", FI_PARAM_BOOL,
-			"Enable/Disable low LE preemptive recv transitions.");
-	fi_param_get_bool(&cxip_prov, "hybrid_recv_preemptive",
-			  &cxip_env.hybrid_recv_preemptive);
-
-	if (cxip_env.rx_match_mode != CXIP_PTLTE_HYBRID_MODE &&
-	    cxip_env.hybrid_recv_preemptive) {
-		CXIP_WARN("Not in hybrid mode, ignore LE  recv preemptive\n");
-		cxip_env.hybrid_recv_preemptive = 0;
-	}
-
-	fi_param_define(&cxip_prov, "hybrid_posted_recv_preemptive",
-			FI_PARAM_BOOL,
-			"Enable preemptive transition to software endpoint when number of posted receives exceeds RX attribute size");
-	fi_param_get_bool(&cxip_prov, "hybrid_posted_recv_preemptive",
-			  &cxip_env.hybrid_posted_recv_preemptive);
-
-	if (cxip_env.rx_match_mode != CXIP_PTLTE_HYBRID_MODE &&
-	    cxip_env.hybrid_posted_recv_preemptive) {
-		CXIP_WARN("Not in hybrid mode, ignore hybrid_posted_recv_preemptive\n");
-		cxip_env.hybrid_posted_recv_preemptive = 0;
-	}
-
-	fi_param_define(&cxip_prov, "hybrid_unexpected_msg_preemptive",
-			FI_PARAM_BOOL,
-			"Enable preemptive transition to software endpoint when number of hardware unexpected messages exceeds RX attribute size");
-	fi_param_get_bool(&cxip_prov, "hybrid_unexpected_msg_preemptive",
-			  &cxip_env.hybrid_unexpected_msg_preemptive);
-
-	if (cxip_env.rx_match_mode != CXIP_PTLTE_HYBRID_MODE &&
-	    cxip_env.hybrid_unexpected_msg_preemptive) {
-		CXIP_WARN("Not in hybrid mode, ignore hybrid_unexpected_msg_preemptive\n");
-		cxip_env.hybrid_unexpected_msg_preemptive = 0;
-	}
-
 	if (cxip_software_pte_allowed()) {
 		min_free = CXIP_REQ_BUF_HEADER_MAX_SIZE +
 			cxip_env.rdzv_threshold + cxip_env.rdzv_get_min;
@@ -1251,6 +1183,17 @@ static void cxip_env_init(void)
 	if (cxip_env.coll_timeout_usec > CXIP_COLL_MAX_TIMEOUT_USEC)
 		cxip_env.coll_timeout_usec = CXIP_COLL_MAX_TIMEOUT_USEC;
 
+	fi_param_define(&cxip_prov, "coll_fm_timeout_msec", FI_PARAM_SIZE_T,
+		"FM API timeout (msec) (default %d, min %d, max %d).",
+		cxip_env.coll_fm_timeout_msec, CXIP_COLL_MIN_FM_TIMEOUT_MSEC,
+		CXIP_COLL_MAX_FM_TIMEOUT_MSEC);
+	fi_param_get_size_t(&cxip_prov, "coll_fm_timeout_msec",
+			    &cxip_env.coll_fm_timeout_msec);
+	if (cxip_env.coll_fm_timeout_msec < CXIP_COLL_MIN_FM_TIMEOUT_MSEC)
+		cxip_env.coll_fm_timeout_msec = CXIP_COLL_MIN_FM_TIMEOUT_MSEC;
+	if (cxip_env.coll_fm_timeout_msec > CXIP_COLL_MAX_FM_TIMEOUT_MSEC)
+		cxip_env.coll_fm_timeout_msec = CXIP_COLL_MAX_FM_TIMEOUT_MSEC;
+
 	fi_param_define(&cxip_prov, "default_tx_size", FI_PARAM_SIZE_T,
 			"Default provider tx_attr.size (default: %lu).",
 			cxip_env.default_tx_size);
@@ -1332,6 +1275,18 @@ static void cxip_env_init(void)
 
 		param_str = NULL;
 	}
+
+	fi_param_define(&cxip_prov, "mr_cache_events_disable_poll_nsecs", FI_PARAM_SIZE_T,
+			"Max amount of time to poll when disabling an MR configured with MR match events (default: %lu).",
+			cxip_env.mr_cache_events_disable_poll_nsecs);
+	fi_param_get_size_t(&cxip_prov, "mr_cache_events_disable_poll_nsecs",
+			    &cxip_env.mr_cache_events_disable_poll_nsecs);
+
+	fi_param_define(&cxip_prov, "mr_cache_events_disable_le_poll_nsecs", FI_PARAM_SIZE_T,
+			"Max amount of time to poll when LE invalidate disabling an MR configured with MR match events (default: %lu).",
+			cxip_env.mr_cache_events_disable_le_poll_nsecs);
+	fi_param_get_size_t(&cxip_prov, "mr_cache_events_disable_le_poll_nsecs",
+			    &cxip_env.mr_cache_events_disable_le_poll_nsecs);
 
 	set_system_page_size();
 }

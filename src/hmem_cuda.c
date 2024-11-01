@@ -420,7 +420,7 @@ int cuda_open_handle(void **handle, size_t size, uint64_t device,
 	return (cuda_ret == cudaErrorAlreadyMapped) ? -FI_EALREADY:-FI_EINVAL;
 }
 
-int cuda_close_handle(void *ipc_ptr)
+int cuda_close_handle(void *ipc_ptr, void **handle)
 {
 	cudaError_t cuda_ret;
 
@@ -496,12 +496,12 @@ static int cuda_hmem_dl_init(void)
 
 	cuda_attr.nvml_handle = dlopen("libnvidia-ml.so", RTLD_NOW);
 	if (!cuda_attr.nvml_handle) {
-		FI_WARN(&core_prov, FI_LOG_CORE,
+		FI_INFO(&core_prov, FI_LOG_CORE,
 			"Failed to dlopen libnvidia-ml.so.  Trying libnvidia-ml.so.1\n");
 		cuda_attr.nvml_handle = dlopen("libnvidia-ml.so.1", RTLD_NOW);
 		if (!cuda_attr.nvml_handle) {
 			FI_WARN(&core_prov, FI_LOG_CORE,
-			"Failed to dlopen libnvidia-ml.so.1 also, bypassing nvml calls\n");
+			"Failed to dlopen libnvidia-ml.so or libnvidia-ml.so.1, bypassing nvml calls\n");
 		}
 	}
 
@@ -640,12 +640,7 @@ static int cuda_hmem_detect_p2p_access_support(void)
 		peer = dev + 1;
 		cuda_ret = ofi_cuDeviceCanAccessPeer(&can_access_peer, dev, peer);
 		if (CUDA_SUCCESS != cuda_ret) {
-			FI_WARN(&core_prov, FI_LOG_CORE,
-				"Failed to detect support for peer-to-peer "
-				"access between CUDA devices via "
-				"cuDeviceCanAccessPeer(): %s:%s\n",
-				ofi_cudaGetErrorName((cudaError_t)cuda_ret),
-				ofi_cudaGetErrorString((cudaError_t)cuda_ret));
+			CUDA_DRIVER_LOG_ERR(cuda_ret, "cuDeviceCanAccessPeer");
 			return -FI_EIO;
 		}
 		FI_INFO(&core_prov, FI_LOG_CORE,
@@ -767,6 +762,9 @@ int cuda_hmem_init(void)
 			"Use gdrcopy to copy data to/from CUDA GPU memory. "
 			"If libfabric is not compiled with gdrcopy support, "
 			"this variable is not checked. (default: true)");
+
+	fi_param_define(NULL, "hmem_cuda_use_dmabuf", FI_PARAM_BOOL,
+			"Use dma-buf for sharing buffer with hardware. (default:true)");
 
 	ret = cuda_hmem_dl_init();
 	if (ret != FI_SUCCESS)
@@ -941,7 +939,11 @@ bool cuda_is_gdrcopy_enabled(void)
 
 bool cuda_is_dmabuf_supported(void)
 {
-	return cuda_attr.dmabuf_supported;
+	int use_dmabuf = 1;
+
+	fi_param_get_bool(NULL, "hmem_cuda_use_dmabuf", &use_dmabuf);
+
+	return use_dmabuf && cuda_attr.dmabuf_supported;
 }
 
 #else
@@ -1014,7 +1016,7 @@ int cuda_open_handle(void **handle, size_t size, uint64_t device,
 	return -FI_ENOSYS;
 }
 
-int cuda_close_handle(void *ipc_ptr)
+int cuda_close_handle(void *ipc_ptr, void **handle)
 {
 	return -FI_ENOSYS;
 }

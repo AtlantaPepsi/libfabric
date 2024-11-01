@@ -18,8 +18,6 @@ struct efa_ibv_cq_poll_list_entry {
 	struct efa_ibv_cq	*cq;
 };
 
-void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq);
-
 static inline
 int efa_ibv_cq_poll_list_match(struct dlist_entry *entry, const void *cq)
 {
@@ -131,6 +129,11 @@ static inline int efa_cq_ibv_cq_ex_open(struct fi_cq_attr *attr,
 		.comp_mask = 0,
 		.wc_flags = EFADV_WC_EX_WITH_SGID,
 	};
+
+#if HAVE_CAPS_UNSOLICITED_WRITE_RECV
+	if (efa_rdm_use_unsolicited_write_recv())
+		efadv_cq_init_attr.wc_flags |= EFADV_WC_EX_WITH_IS_UNSOLICITED;
+#endif
 
 	*ibv_cq_ex = efadv_create_cq(ibv_ctx, &init_attr_ex,
 				     &efadv_cq_init_attr,

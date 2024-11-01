@@ -23,26 +23,25 @@
 /*
  * cxip_recv_req_src_addr() - Translate request source address to FI address.
  */
-fi_addr_t cxip_recv_req_src_addr(struct cxip_req *req)
+fi_addr_t cxip_recv_req_src_addr(struct cxip_rxc *rxc,
+				 uint32_t init, uint16_t vni,
+				 bool force)
 {
-	struct cxip_rxc *rxc = req->recv.rxc;
-
 	/* If the FI_SOURCE capability is enabled, convert the initiator's
 	 * address to an FI address to be reported in a CQ event. If
 	 * application AVs are symmetric, the match_id in the EQ event is
 	 * logical and translation is not needed. Otherwise, translate the
 	 * physical address in the EQ event to logical FI address.
 	 */
-	if (rxc->attr.caps & FI_SOURCE) {
+	if ((rxc->attr.caps & FI_SOURCE) || force) {
 		struct cxip_addr addr = {};
 
 		if (rxc->ep_obj->av->symmetric)
-			return CXI_MATCH_ID_EP(rxc->pid_bits,
-					       req->recv.initiator);
+			return CXI_MATCH_ID_EP(rxc->pid_bits, init);
 
-		addr.nic = CXI_MATCH_ID_EP(rxc->pid_bits, req->recv.initiator);
-		addr.pid = CXI_MATCH_ID_PID(rxc->pid_bits, req->recv.initiator);
-		addr.vni = req->recv.vni;
+		addr.nic = CXI_MATCH_ID_EP(rxc->pid_bits, init);
+		addr.pid = CXI_MATCH_ID_PID(rxc->pid_bits, init);
+		addr.vni = vni;
 
 		return cxip_av_lookup_fi_addr(rxc->ep_obj->av, &addr);
 	}
@@ -104,7 +103,7 @@ int cxip_recv_req_alloc(struct cxip_rxc *rxc, void *buf, size_t len,
 	dlist_init(&req->recv.children);
 	dlist_init(&req->recv.rxc_entry);
 
-	ofi_atomic_inc32(&rxc->orx_reqs);
+	cxip_rxc_orx_reqs_inc(rxc);
 	*cxip_req = req;
 
 	return FI_SUCCESS;
@@ -118,15 +117,19 @@ err_free_request:
 void cxip_recv_req_free(struct cxip_req *req)
 {
 	struct cxip_rxc *rxc = req->recv.rxc;
+	struct fid_peer_srx *owner_srx = cxip_get_owner_srx(rxc);
 
 	assert(req->type == CXIP_REQ_RECV);
 	assert(dlist_empty(&req->recv.children));
 	assert(dlist_empty(&req->recv.rxc_entry));
 
-	ofi_atomic_dec32(&rxc->orx_reqs);
+	cxip_rxc_orx_reqs_dec(rxc);
 
 	if (req->recv.recv_md && !req->recv.hybrid_md)
 		cxip_unmap(req->recv.recv_md);
+
+	if (owner_srx && req->rx_entry)
+		owner_srx->owner_ops->free_entry(req->rx_entry);
 
 	cxip_evtq_req_free(req);
 }
@@ -150,7 +153,8 @@ static inline int recv_req_event_success(struct cxip_rxc *rxc,
 	}
 
 	if (req->recv.rxc->attr.caps & FI_SOURCE) {
-		src_addr = cxip_recv_req_src_addr(req);
+		src_addr = cxip_recv_req_src_addr(req->recv.rxc, req->recv.initiator,
+						  req->recv.vni, false);
 		if (src_addr != FI_ADDR_NOTAVAIL ||
 		    !(rxc->attr.caps & FI_SOURCE_ERR))
 			return cxip_cq_req_complete_addr(req, src_addr);
@@ -217,7 +221,12 @@ void cxip_recv_req_report(struct cxip_req *req)
 			    parent->recv.mrecv_bytes == parent->recv.mrecv_unlink_bytes)
 				unlinked = true;
 		} else {
-			if ((parent->recv.ulen - parent->recv.mrecv_bytes) < rxc->min_multi_recv)
+			parent->recv.multirecv_inflight--;
+			assert(parent->recv.multirecv_inflight >= 0);
+
+			if (!parent->recv.multirecv_inflight &&
+			    ((parent->recv.ulen - parent->recv.mrecv_bytes) <
+			    rxc->min_multi_recv))
 				unlinked = true;
 		}
 
@@ -313,6 +322,9 @@ struct cxip_req *cxip_mrecv_req_dup(struct cxip_req *mrecv_req)
 
 	/* Update fields specific to this Send */
 	req->recv.parent = mrecv_req;
+
+	/* Parent keeps track of operations in flight */
+	mrecv_req->recv.multirecv_inflight++;
 
 	/* Start pointer and data_len must be set elsewhere! */
 
@@ -460,7 +472,7 @@ int cxip_recv_cancel(struct cxip_req *req)
 	/* In hybrid mode requests could be on priority list
 	 * or software receive list.
 	 */
-	if (req->recv.software_list) {
+	if (!req->recv.hw_offloaded) {
 		dlist_remove_init(&req->recv.rxc_entry);
 		req->recv.canceled = true;
 		req->recv.unlinked = true;
@@ -526,7 +538,7 @@ int cxip_flush_appends(struct cxip_rxc_hpc *rxc,
 		ret = -FI_EAGAIN;
 		goto err;
 	}
-	ofi_atomic_inc32(&rxc->base.orx_reqs);
+	cxip_rxc_orx_reqs_inc(&rxc->base);
 
 	rxc->base.rx_evtq.ack_batch_size = 1;
 
@@ -553,7 +565,7 @@ int cxip_flush_appends(struct cxip_rxc_hpc *rxc,
 	return FI_SUCCESS;
 
 err_dec_free_cq_req:
-	ofi_atomic_dec32(&rxc->base.orx_reqs);
+	cxip_rxc_orx_reqs_dec(&rxc->base);
 	cxip_evtq_req_free(req);
 err:
 	return ret;
@@ -575,6 +587,7 @@ int cxip_recv_req_dropped(struct cxip_req *req)
 	assert(rxc->base.protocol == FI_PROTO_CXI);
 	assert(dlist_empty(&req->recv.rxc_entry));
 
+	req->recv.hw_offloaded = false;
 	dlist_insert_tail(&req->recv.rxc_entry, &rxc->replay_queue);
 
 	RXC_DBG(rxc, "Receive dropped: %p\n", req);

@@ -86,13 +86,13 @@ void efa_shm_info_create(const struct fi_info *app_info, struct fi_info **shm_in
 	 * make this request to shm as well.
 	 */
 	shm_hints->domain_attr->mr_mode = FI_MR_VIRT_ADDR;
-	if (app_info && (app_info->caps & FI_HMEM)) {
+	if (app_info->caps & FI_HMEM) {
 		shm_hints->domain_attr->mr_mode |= FI_MR_HMEM;
 	}
 
 	shm_hints->domain_attr->threading = app_info->domain_attr->threading;
 	shm_hints->domain_attr->av_type = FI_AV_TABLE;
-	shm_hints->domain_attr->caps |= FI_LOCAL_COMM;
+	shm_hints->domain_attr->caps |= FI_LOCAL_COMM | FI_PEER | FI_AV_USER_ID;
 	shm_hints->tx_attr->msg_order = FI_ORDER_SAS;
 	shm_hints->rx_attr->msg_order = FI_ORDER_SAS;
 	/*

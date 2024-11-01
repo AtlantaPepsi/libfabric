@@ -66,8 +66,6 @@ set functional_tests=^
 	"msg"^
 	"msg_epoll"^
 	"msg_sockets"^
-	"poll -t queue"^
-	"poll -t counter"^
 	"rdm"^
 	"rdm -U"^
 	"rdm_tagged_peek"^
@@ -96,6 +94,8 @@ set short_tests=^
 	"rma_bw -e rdm -o read -I 5 -U"^
 	"rma_bw -e rdm -o writedata -I 5"^
 	"rma_bw -e rdm -o writedata -I 5 -U"^
+	"rdm_atomic -I 5 -o all"^
+	"rdm_atomic -I 5 -o all -v"^
 	"rdm_cntr_pingpong -I 5"^
 	"multi_recv -e rdm -I 5"^
 	"rdm_pingpong -I 5"^
@@ -127,6 +127,8 @@ set standard_tests=^
 	"rma_bw -e rdm -o read -U"^
 	"rma_bw -e rdm -o writedata"^
 	"rma_bw -e rdm -o writedata -U"^
+	"rdm_atomic -o all"^
+	"rdm_atomic -o all -v"^
 	"rdm_cntr_pingpong"^
 	"multi_recv -e rdm"^
 	"rdm_pingpong"^
@@ -147,8 +149,8 @@ set standard_tests=^
 	"rdm_tagged_bw -v -U"
 
 set multinode_tests=^
-	"multinode -C msg"^
-	"multinode -C rma"
+	"multinode -x msg"^
+	"multinode -x rma"
 
 
 goto :global_main

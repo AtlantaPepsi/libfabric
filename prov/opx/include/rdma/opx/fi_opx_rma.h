@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2016 by Argonne National Laboratory.
- * Copyright (C) 2021-2023 Cornelis Networks.
+ * Copyright (C) 2021-2024 Cornelis Networks.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -43,7 +43,13 @@
 extern "C" {
 #endif
 
-int fi_opx_check_rma(struct fi_opx_ep *opx_ep);
+__OPX_FORCE_INLINE__
+int fi_opx_check_rma(struct fi_opx_ep *opx_ep)
+{
+	return OFI_UNLIKELY(!opx_ep ||
+		(opx_ep->state != FI_OPX_EP_INITITALIZED_ENABLED) ||
+		(opx_ep->av->type == FI_AV_UNSPEC)) ? -FI_EINVAL : 0;
+}
 
 void fi_opx_hit_zero(struct fi_opx_completion_counter *cc);
 
@@ -57,7 +63,6 @@ void fi_opx_readv_internal(struct fi_opx_ep *opx_ep,
 			   const union fi_opx_addr opx_target_addr,
 			   const uint64_t *addr_offset,
 			   const uint64_t *key,
-			   union fi_opx_context *opx_context,
 			   const uint64_t tx_op_flags,
 			   const struct fi_opx_cq *opx_cq,
 			   const struct fi_opx_cntr *opx_cntr,
@@ -67,8 +72,10 @@ void fi_opx_readv_internal(struct fi_opx_ep *opx_ep,
 			   const uint32_t opcode,
 			   const int lock_required,
 			   const uint64_t caps,
-			   const enum ofi_reliability_kind reliability)
+			   const enum ofi_reliability_kind reliability,
+			   const enum opx_hfi1_type hfi1_type)
 {
+	OPX_TRACER_TRACE(OPX_TRACER_BEGIN, "READV_INTERNAL");
 
 	union fi_opx_hfi1_deferred_work *work =
 		(union fi_opx_hfi1_deferred_work *) ofi_buf_alloc(opx_ep->tx->work_pending_pool);
@@ -79,7 +86,6 @@ void fi_opx_readv_internal(struct fi_opx_ep *opx_ep,
 	params->work_elem.completion_action = NULL;
 	params->work_elem.payload_copy = NULL;
 	params->work_elem.complete = false;
-	params->work_elem.low_priority = false;
 
 	params->opx_target_addr = opx_target_addr;
 	params->key = (key == NULL) ? -1 : *key;
@@ -87,18 +93,29 @@ void fi_opx_readv_internal(struct fi_opx_ep *opx_ep,
 	params->dest_rx = opx_target_addr.hfi1_rx;
 	params->bth_rx = params->dest_rx << 56;
 	params->lrh_dlid = FI_OPX_ADDR_TO_HFI1_LRH_DLID(opx_target_addr.fi);
-	params->pbc_dws = 2 + /* pbc */
-			 2 + /* lrh */
-			 3 + /* bth */
-			 9 + /* kdeth; from "RcvHdrSize[i].HdrSize" CSR */
-			 16; /* one "struct fi_opx_hfi1_dput_iov", padded to cache line */
-	params->lrh_dws = htons(params->pbc_dws - 1);
+	params->pbc_dlid = OPX_PBC_LRH_DLID_TO_PBC_DLID(params->lrh_dlid, hfi1_type);
+	if (hfi1_type & (OPX_HFI1_WFR | OPX_HFI1_JKR_9B)) {
+		params->pbc_dws = 2 + /* pbc */
+				2 + /* lrh */
+				3 + /* bth */
+				9 + /* kdeth; from "RcvHdrSize[i].HdrSize" CSR */
+				16; /* one "struct fi_opx_hfi1_dput_iov", padded to cache line */
+		params->lrh_dws = htons(params->pbc_dws - 2 + 1); /* (BE: LRH DW) does not include pbc (8 bytes), but does include icrc (4 bytes) */
+	} else {
+		params->pbc_dws = 2 + /* pbc */
+				4 + /* lrh uncompressed */
+				3 + /* bth */
+				9 + /* kdeth; from "RcvHdrSize[i].HdrSize" CSR */
+				16 + /* one "struct fi_opx_hfi1_dput_iov", padded to cache line */
+				2; /* ICRC/tail */
+		params->lrh_dws = (params->pbc_dws - 2) >> 1; /* (LRH QW) does not include pbc (8 bytes) */
+	}
 	params->is_intranode = fi_opx_hfi1_tx_is_intranode(opx_ep, opx_target_addr, caps);
 	params->reliability = reliability;
 	params->opcode = opcode;
 
-	assert(op == FI_NOOP || op < FI_ATOMIC_OP_LAST);
-	assert(dt == FI_VOID || dt < FI_DATATYPE_LAST);
+	assert(op == FI_NOOP || op < OFI_ATOMIC_OP_LAST);
+	assert(dt == FI_VOID || dt < OFI_DATATYPE_LAST);
 	params->op = (op == FI_NOOP) ? FI_NOOP-1 : op;
 	params->dt = (dt == FI_VOID) ? FI_VOID-1 : dt;
 
@@ -118,8 +135,14 @@ void fi_opx_readv_internal(struct fi_opx_ep *opx_ep,
 	params->rma_request->hmem_iface = iov->iface;
 	params->rma_request->hmem_device = iov->device;
 
-	params->work_elem.work_fn = params->is_intranode ? fi_opx_do_readv_internal_intranode
-							 : fi_opx_do_readv_internal;
+	if (params->is_intranode) {
+		params->work_elem.work_fn =  fi_opx_do_readv_internal_intranode;
+		params->work_elem.work_type = OPX_WORK_TYPE_SHM;
+	} else {
+		params->work_elem.work_fn = fi_opx_do_readv_internal;
+		params->work_elem.work_type = OPX_WORK_TYPE_PIO;
+	}
+
 	FI_OPX_DEBUG_COUNTERS_INC_COND((iov->iface != FI_HMEM_SYSTEM) && params->is_intranode,
 					opx_ep->debug_counters.hmem.rma_read_intranode);
 	FI_OPX_DEBUG_COUNTERS_INC_COND((iov->iface != FI_HMEM_SYSTEM) && !params->is_intranode,
@@ -133,16 +156,19 @@ void fi_opx_readv_internal(struct fi_opx_ep *opx_ep,
 	params->u32_extended_rx =
 		fi_opx_ep_get_u32_extended_rx(opx_ep, params->is_intranode, params->dest_rx);
 
-	int rc = fi_opx_do_readv_internal(work);
+	int rc = params->work_elem.work_fn(work);
 	if(rc == FI_SUCCESS) {
 		OPX_BUF_FREE(work);
+		OPX_TRACER_TRACE(OPX_TRACER_END_SUCCESS, "READV_INTERNAL");
 		return;
 	}
 	assert(rc == -FI_EAGAIN);
 
 	/* Try again later*/
 	assert(work->work_elem.slist_entry.next == NULL);
-	slist_insert_tail(&work->work_elem.slist_entry, &opx_ep->tx->work_pending);
+	slist_insert_tail(&work->work_elem.slist_entry, &opx_ep->tx->work_pending[params->work_elem.work_type]);
+	
+	OPX_TRACER_TRACE(OPX_TRACER_END_SUCCESS, "READV_INTERNAL");
 }
 
 __OPX_FORCE_INLINE__
@@ -151,30 +177,30 @@ void fi_opx_write_internal(struct fi_opx_ep *opx_ep,
 			   const size_t niov,
 			   const union fi_opx_addr opx_dst_addr,
 			   uint64_t addr_offset, const uint64_t key,
-			   union fi_opx_context *opx_context,
 			   struct fi_opx_completion_counter *cc,
 			   enum fi_datatype dt, enum fi_op op,
 			   const uint64_t tx_op_flags,
 			   const uint64_t is_hmem,
 			   const int lock_required, const uint64_t caps,
-			   const enum ofi_reliability_kind reliability)
+			   const enum ofi_reliability_kind reliability,
+			   const enum opx_hfi1_type hfi1_type)
 {
+	OPX_TRACER_TRACE(OPX_TRACER_BEGIN, "WRITE_INTERNAL");
 	assert(niov == 1); // TODO, support something ... bigger
-	assert(op == FI_NOOP || op < FI_ATOMIC_OP_LAST);
-	assert(dt == FI_VOID || dt < FI_DATATYPE_LAST);
+	assert(op == FI_NOOP || op < OFI_ATOMIC_OP_LAST);
+	assert(dt == FI_VOID || dt < OFI_DATATYPE_LAST);
 
 	union fi_opx_hfi1_deferred_work *work =
 		(union fi_opx_hfi1_deferred_work *) ofi_buf_alloc(opx_ep->tx->work_pending_pool);
 	struct fi_opx_hfi1_dput_params *params = &work->dput;
 
 	params->work_elem.slist_entry.next = NULL;
-	params->work_elem.work_fn = fi_opx_hfi1_do_dput;
 	params->work_elem.completion_action = NULL;
 	params->work_elem.payload_copy = NULL;
 	params->work_elem.complete = false;
-	params->work_elem.low_priority = false;
 	params->opx_ep = opx_ep;
 	params->lrh_dlid = FI_OPX_ADDR_TO_HFI1_LRH_DLID(opx_dst_addr.fi);
+	params->pbc_dlid = OPX_PBC_LRH_DLID_TO_PBC_DLID(params->lrh_dlid, hfi1_type);
 	params->slid = opx_dst_addr.uid.lid;
 	params->origin_rs = opx_dst_addr.reliability_rx;
 	params->dt = dt == FI_VOID ? FI_VOID-1 : dt;
@@ -204,28 +230,23 @@ void fi_opx_write_internal(struct fi_opx_ep *opx_ep,
 	params->payload_bytes_for_iovec = 0;
 	params->target_hfi_unit = opx_dst_addr.hfi1_unit;
 
-	/* Possible SHM connections required for certain applications (i.e., DAOS)
-	 * exceeds the max value of the legacy u8_rx field.  Use u32_extended field.
-	 */
-	ssize_t rc = fi_opx_shm_dynamic_tx_connect(params->is_intranode, opx_ep, params->u32_extended_rx, opx_dst_addr.hfi1_unit);
-	assert(rc == FI_SUCCESS);
-	fi_opx_ep_rx_poll(&opx_ep->ep_fid, 0, OPX_RELIABILITY, FI_OPX_HDRQ_MASK_RUNTIME);
-
 	fi_opx_hfi1_dput_sdma_init(opx_ep, params, iov->len, 0, 0, NULL, is_hmem);
 	FI_OPX_DEBUG_COUNTERS_INC_COND(is_hmem && params->is_intranode,
 					opx_ep->debug_counters.hmem.rma_write_intranode);
 	FI_OPX_DEBUG_COUNTERS_INC_COND(is_hmem && !params->is_intranode,
 					opx_ep->debug_counters.hmem.rma_write_hfi);
 
-	rc = params->work_elem.work_fn(work);
+	ssize_t rc = params->work_elem.work_fn(work);
 	if (rc == FI_SUCCESS) {
 		assert(params->work_elem.complete);
 		OPX_BUF_FREE(work);
+		OPX_TRACER_TRACE(OPX_TRACER_END_SUCCESS, "WRITE_INTERNAL");
 		return;
 	}
 	assert(rc == -FI_EAGAIN);
-	if (params->work_elem.low_priority) {
+	if (params->work_elem.work_type == OPX_WORK_TYPE_LAST) {
 		slist_insert_tail(&work->work_elem.slist_entry, &opx_ep->tx->work_pending_completion);
+		OPX_TRACER_TRACE(OPX_TRACER_END_SUCCESS, "WRITE_INTERNAL");
 		return;
 	}
 
@@ -236,7 +257,9 @@ void fi_opx_write_internal(struct fi_opx_ep *opx_ep,
 	if (tx_op_flags & FI_INJECT) {
 		assert(iov->len <= FI_OPX_HFI1_PACKET_IMM);
 		OPX_HMEM_COPY_FROM((void *) params->inject_data, (void *) iov->buf,
-				   iov->len, iov->iface, iov->device);
+				   iov->len, OPX_HMEM_NO_HANDLE,
+				   OPX_HMEM_DEV_REG_THRESHOLD_NOT_SET,
+				   iov->iface, iov->device);
 		params->iov[0].sbuf = (uintptr_t) params->inject_data;
 		params->iov[0].sbuf_iface = FI_HMEM_SYSTEM;
 		params->iov[0].sbuf_device = 0;
@@ -244,46 +267,76 @@ void fi_opx_write_internal(struct fi_opx_ep *opx_ep,
 
 	/* Try again later*/
 	assert(work->work_elem.slist_entry.next == NULL);
-	slist_insert_tail(&work->work_elem.slist_entry, &opx_ep->tx->work_pending);
+	slist_insert_tail(&work->work_elem.slist_entry, &opx_ep->tx->work_pending[params->work_elem.work_type]);
+	OPX_TRACER_TRACE(OPX_TRACER_END_SUCCESS, "WRITE_INTERNAL");
 }
 
+__OPX_FORCE_INLINE__
+ssize_t opx_rma_get_context(struct fi_opx_ep *opx_ep, const void *user_context,
+			    const void *cq, const uint64_t flags,
+			    struct opx_context **context)
+{
+	if (!cq || !user_context) {
+		*context = NULL;
+		return FI_SUCCESS;
+	}
 
+	struct opx_context *ctx = (struct opx_context *) ofi_buf_alloc(opx_ep->rx->ctx_pool);
+	if (OFI_UNLIKELY(ctx == NULL)) {
+		*context = NULL;
+		FI_WARN(fi_opx_global.prov, FI_LOG_EP_DATA, "Out of memory.\n");
+		return -FI_ENOMEM;
+	}
+
+	ctx->next = NULL;
+	ctx->flags = (uint64_t) flags;
+	ctx->err_entry.err = 0;
+	ctx->err_entry.op_context = (void *) user_context;
+
+	*context = ctx;
+	return FI_SUCCESS;
+}
 
 ssize_t fi_opx_inject_write_generic(struct fid_ep *ep, const void *buf, size_t len,
 				    fi_addr_t dst_addr, uint64_t addr_offset, uint64_t key,
 				    int lock_required, const enum fi_av_type av_type,
 				    const uint64_t caps,
-				    const enum ofi_reliability_kind reliability);
+				    const enum ofi_reliability_kind reliability,
+				    const enum opx_hfi1_type hfi1_type);
 
 ssize_t fi_opx_write_generic(struct fid_ep *ep, const void *buf, size_t len, void *desc,
 			     fi_addr_t dst_addr, uint64_t addr_offset, uint64_t key, void *context,
 			     int lock_required, const enum fi_av_type av_type, const uint64_t caps,
-			     const enum ofi_reliability_kind reliability);
+			     const enum ofi_reliability_kind reliability,
+			     const enum opx_hfi1_type hfi1_type);
 
 ssize_t fi_opx_writev_generic(struct fid_ep *ep, const struct iovec *iov, void **desc, size_t count,
 			      fi_addr_t dst_addr, uint64_t addr_offset, uint64_t key, void *context,
 			      int lock_required, const enum fi_av_type av_type, const uint64_t caps,
-			      const enum ofi_reliability_kind reliability);
+			      const enum ofi_reliability_kind reliability,
+			      const enum opx_hfi1_type hfi1_type);
 
 ssize_t fi_opx_writemsg_generic(struct fid_ep *ep, const struct fi_msg_rma *msg, uint64_t flags,
 				int lock_required, const enum fi_av_type av_type,
-				const uint64_t caps, const enum ofi_reliability_kind reliability);
+				const uint64_t caps, const enum ofi_reliability_kind reliability,
+				const enum opx_hfi1_type hfi1_type);
 
 ssize_t fi_opx_read_generic(struct fid_ep *ep, void *buf, size_t len, void *desc,
 			    fi_addr_t src_addr, uint64_t addr_offset, uint64_t key, void *context,
 			    int lock_required, const enum fi_av_type av_type, const uint64_t caps,
-
-			    const enum ofi_reliability_kind reliability);
+			    const enum ofi_reliability_kind reliability,
+			    const enum opx_hfi1_type hfi1_type);
 
 ssize_t fi_opx_readv_generic(struct fid_ep *ep, const struct iovec *iov, void **desc, size_t count,
 			     fi_addr_t src_addr, uint64_t addr_offset, uint64_t key, void *context,
 			     int lock_required, const enum fi_av_type av_type, const uint64_t caps,
-
-			     const enum ofi_reliability_kind reliability);
+			     const enum ofi_reliability_kind reliability,
+			     const enum opx_hfi1_type hfi1_type);
 
 ssize_t fi_opx_readmsg_generic(struct fid_ep *ep, const struct fi_msg_rma *msg, uint64_t flags,
 			       int lock_required, const enum fi_av_type av_type,
-			       const uint64_t caps, const enum ofi_reliability_kind reliability);
+			       const uint64_t caps, const enum ofi_reliability_kind reliability,
+			       const enum opx_hfi1_type hfi1_type);
 
 #ifdef __cplusplus
 }

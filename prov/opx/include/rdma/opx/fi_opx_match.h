@@ -223,7 +223,6 @@ struct fi_opx_hfi1_ue_packet *fi_opx_match_find_uepkt_by_tag(struct fi_opx_match
 								struct fi_opx_debug_counters *debug_counters)
 {
 	struct fi_opx_hfi1_ue_packet *uepkt = ue_hash->tag_ht[hash_index].head;
-	assert(uepkt);
 
 	FI_OPX_DEBUG_COUNTERS_INC(debug_counters->match.ue_hash_tag_searches);
 
@@ -241,7 +240,7 @@ struct fi_opx_hfi1_ue_packet *fi_opx_match_find_uepkt_by_tag(struct fi_opx_match
 
 __OPX_FORCE_INLINE__
 struct fi_opx_hfi1_ue_packet *fi_opx_match_find_uepkt(struct fi_opx_match_ue_hash *ue_hash,
-							const union fi_opx_context *context,
+							const struct opx_context *context,
 							struct fi_opx_debug_counters *debug_counters)
 {
 	if (!ue_hash->ue.head) {
