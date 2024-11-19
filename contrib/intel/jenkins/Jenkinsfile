@@ -200,27 +200,17 @@ def checkout_external_resources() {
   checkout_ci()
 }
 
-def generate_diff(def branch_name, def output_loc) {
-  sh """
-    git remote add mainRepo ${env.UPSTREAM}
-    git fetch mainRepo
-    git diff --name-only HEAD..mainRepo/${branch_name} > ${output_loc}/commit_id
-    git remote remove mainRepo
-  """
-}
+def git_diffs() {
+  dir ("${CUSTOM_WORKSPACE}/source/libfabric") {
+    sh """
+      git diff --name-only HEAD..upstream/${TARGET} > ./commit_id
+      git diff upstream/${TARGET}:Makefile.am Makefile.am > ./Makefile.am.diff
+      git diff upstream/${TARGET}:configure.ac configure.ac > ./configure.ac.diff
 
-def generate_release_num(def branch_name, def output_loc) {
-  sh """
-    git remote add mainRepo ${env.UPSTREAM}
-    git fetch mainRepo
-    git diff mainRepo/${branch_name}:Makefile.am Makefile.am > \
-        ${output_loc}/Makefile.am.diff
-    git diff mainRepo/${branch_name}:configure.ac configure.ac > \
-        ${output_loc}/configure.ac.diff
-    cat configure.ac | grep AC_INIT | cut -d ' ' -f 2 | \
-        cut -d '[' -f 2 | cut -d ']' -f 1 > ${output_loc}/release_num.txt
-    git remote remove mainRepo
-  """
+      cat configure.ac | grep AC_INIT | cut -d ' ' -f 2 | \
+      cut -d '[' -f 2 | cut -d ']' -f 1 > ./release_num.txt
+    """
+  }
 }
 
 def slurm_build(modes, partition, location, tag, hw=null, additional_args=null) {
@@ -276,8 +266,22 @@ def build(item, mode=null, hw=null, additional_args=null) {
   run_python(PYTHON_VERSION, cmd)
 }
 
-def build_ci() {
+def bootstrap_ci() {
   sh "${CI_LOCATION}/${env.CI_MODULE}/bootstrap.sh"
+}
+
+def checkout_tar(name) {
+  dir ("${env.CUSTOM_WORKSPACE}/${name}/libfabric") {
+    checkout scm
+    TARGET=check_target()
+    sh """
+      git remote add upstream ${env.UPSTREAM}
+      git pull --rebase upstream ${TARGET}
+    """
+  }
+  dir ("${env.CUSTOM_WORKSPACE}/${name}/") {
+    sh "tar -cvf libfabric.tar.gz libfabric/*"
+  }
 }
 
 def check_target() {
@@ -369,27 +373,7 @@ pipeline {
     stage ('checkout') {
       steps {
         script {
-          dir ("${CUSTOM_WORKSPACE}/source/libfabric") {
-            checkout scm
-          }
-          dir ("${CUSTOM_WORKSPACE}/grass/libfabric") {
-            checkout scm
-          }
-          dir ("${CUSTOM_WORKSPACE}/water/libfabric") {
-            checkout scm
-          }
-          dir ("${CUSTOM_WORKSPACE}/electric/libfabric") {
-            checkout scm
-          }
-          dir ("${CUSTOM_WORKSPACE}/ucx/libfabric") {
-            checkout scm
-          }
-          dir ("${CUSTOM_WORKSPACE}/cuda/libfabric") {
-            checkout scm
-          }
-          dir ("${CUSTOM_WORKSPACE}/iouring/libfabric") {
-            checkout scm
-          }
+          checkout_tar("source")
           dir (CUSTOM_WORKSPACE) {
             checkout_external_resources()
           }
@@ -399,12 +383,7 @@ pipeline {
     stage ('opt-out') {
       steps {
         script {
-          TARGET=check_target()
-          dir ("${CUSTOM_WORKSPACE}/source/libfabric") {
-            generate_diff("${TARGET}", "${env.WORKSPACE}/source/libfabric")
-            generate_release_num("${TARGET}", "${env.WORKSPACE}/source/libfabric")
-          }
-
+          git_diffs()
           if (env.WEEKLY == null) {
             weekly = false
           } else {
@@ -421,6 +400,16 @@ pipeline {
         }
       }
     }
+    stage ('health check') {
+      when { equals expected: true, actual: DO_RUN }
+      steps {
+        script {
+          dir (CI_LOCATION) {
+            sh "./temperature.sh"
+          }
+        }
+      }
+    }
     stage ('prepare build') {
       when { equals expected: true, actual: DO_RUN }
       steps {
@@ -432,80 +421,88 @@ pipeline {
         }
       }
     }
+    stage ('bootstrap-ci') {
+      steps {
+        script {
+          bootstrap_ci()
+        }
+      }
+    }
     stage ('parallel-builds') {
       when { equals expected: true, actual: DO_RUN }
       parallel {
-        stage ('build-ci') {
-          steps {
-            script {
-              build_ci()
-            }
-          }
-        }
         stage ('build-water') {
           steps {
             script {
-              slurm_build(BUILD_MODES, "totodile", "water", "water", "water")
-              slurm_batch("totodile", "1",
+              dir (CI_LOCATION) {
+                run_ci("pre-build", "pr_build_water.json")
+                run_ci("pre-build", "pr_build_shmem_water.json")
+                slurm_batch("totodile", "1",
                             "${env.LOG_DIR}/build_mpich_water_log",
                             """python$PYTHON_VERSION ${RUN_LOCATION}/build.py \
                               --build_item=mpich --build_hw=water"""
-                          )
-              slurm_batch("totodile", "1",
-                          "${env.LOG_DIR}/build_shmem_water_log",
-                          """python$PYTHON_VERSION ${RUN_LOCATION}/build.py \
-                              --build_item=shmem --build_hw=water"""
-                         )
+                           )
+              }
             }
           }
         }
         stage ('build-grass') {
           steps {
             script {
-              slurm_build(BUILD_MODES, "grass", "grass", "grass", "grass")
-              slurm_batch("grass", "1",
+              dir (CI_LOCATION) {
+                run_ci("pre-build", "pr_build_grass.json")
+                run_ci("pre-build", "pr_build_shmem_grass.json")
+                slurm_batch("grass", "1",
                             "${env.LOG_DIR}/build_mpich_grass_log",
                             """python$PYTHON_VERSION ${RUN_LOCATION}/build.py \
                               --build_item=mpich --build_hw=grass"""
-                          )
-              slurm_batch("grass", "1",
-                          "${env.LOG_DIR}/build_shmem_grass_log",
-                          """python$PYTHON_VERSION ${RUN_LOCATION}/build.py \
-                              --build_item=shmem --build_hw=grass"""
-                         )
+                           )
+              }
             }
           }
         }
         stage ('build-electric') {
           steps {
             script {
-              slurm_build(BUILD_MODES, "electric", "electric", "electric",
-                          "electric")
+              dir (CI_LOCATION) {
+                run_ci("pre-build", "pr_build_electric.json")
+              }
             }
           }
         }
         stage ('build-ucx') {
           steps {
             script {
-              slurm_build(BUILD_MODES, "totodile", "ucx", "ucx", "ucx")
+              dir (CI_LOCATION) {
+                run_ci("pre-build", "pr_build_ucx.json")
+              }
             }
           }
         }
-        stage ('build-cuda') {
+        stage ('build-cyndaquil') {
           steps {
             script {
-              slurm_build(["reg"], "cyndaquil", "cuda", "cyndaquil",
-                          "cyndaquil", "--cuda")
-              slurm_build(["reg"], "quilava", "cuda", "quilava",
-                          "quilava", "--cuda")
+              dir (CI_LOCATION) {
+                run_ci("pre-build", "pr_build_cyndaquil.json")
+              }
             }
           }
         }
-        stage ('build-iouring') {
+        stage ('build-quilava') {
           steps {
             script {
-              slurm_build(BUILD_MODES, "ivysaur", "iouring", "ivysaur",
-                          "ivysaur")
+              dir (CI_LOCATION) {
+                run_ci("pre-build", "pr_build_quilava.json")
+              }
+            }
+          }
+        }
+        stage ('build-ivysaur') {
+          steps {
+            script {
+              dir (CI_LOCATION) {
+                run_ci("pre-build", "pr_build_ivysaur.json")
+              }
             }
           }
         }
@@ -519,17 +516,19 @@ pipeline {
           options { skipDefaultCheckout() }
           steps {
             script {
-              dir ("${CUSTOM_WORKSPACE}/source/libfabric") { checkout scm }
+              checkout_tar("source")
               checkout_external_resources()
               dir (CUSTOM_WORKSPACE) {
                 build("logdir")
-                build("libfabric", "reg", "daos")
-                build("fabtests", "reg", "daos")
+              }
+              bootstrap_ci()
+              dir (CI_LOCATION) {
+                run_ci("pre-build", "pr_build_daos.json")
               }
             }
           }
         }
-        stage ('build-gpu') {
+        stage ('build-fire') {
           agent {
             node {
               label 'ze'
@@ -539,14 +538,15 @@ pipeline {
           options { skipDefaultCheckout() }
           steps {
             script {
-              dir ("${CUSTOM_WORKSPACE}/source/libfabric") { checkout scm }
+              checkout_tar("source")
               checkout_external_resources()
               dir (CUSTOM_WORKSPACE) {
                 build("logdir")
                 build("builddir")
-                build_ci()
-                slurm_build(BUILD_MODES, "fabrics-ci", "source", "ze", "gpu",
-                            "--gpu")
+              }
+              bootstrap_ci()
+              dir (CI_LOCATION) {
+                run_ci("pre-build", "pr_build_fire.json")
               }
             }
           }
@@ -599,6 +599,19 @@ pipeline {
                 run_ci("CI_fabtests_tcp_reg", "pr_fabtests_tcp_reg.json")
                 run_ci("CI_fabtests_tcp_dbg", "pr_fabtests_tcp_dbg.json")
                 run_ci("CI_fabtests_tcp_dl", "pr_fabtests_tcp_dl.json")
+              }
+            }
+          }
+        }
+        stage('CI_fabtests_tcp-rxm') {
+           steps {
+            script {
+              dir (CI_LOCATION) {
+                run_ci("CI_fabtests_tcp-rxm_reg",
+                       "pr_fabtests_tcp-rxm_reg.json")
+                run_ci("CI_fabtests_tcp-rxm_dbg",
+                       "pr_fabtests_tcp-rxm_dbg.json")
+                run_ci("CI_fabtests_tcp-rxm_dl", "pr_fabtests_tcp-rxm_dl.json")
               }
             }
           }
@@ -728,9 +741,9 @@ pipeline {
         stage('SHMEM_grass') {
           steps {
             script {
-              dir (RUN_LOCATION) {
-                run_middleware([["tcp", null]], "SHMEM", "shmem",
-                                "grass", "bulbasaur,chikorita", "2")
+              dir (CI_LOCATION) {
+                run_ci("CI_shmem_grass", "pr_shmem_1n2ppn_grass.json")
+                run_ci("CI_shmem_water", "pr_shmem_2n1ppn_water.json")
               }
             }
           }
@@ -738,9 +751,9 @@ pipeline {
         stage('SHMEM_water') {
           steps {
             script {
-              dir (RUN_LOCATION) {
-                run_middleware([["verbs", "rxm"], ["sockets", null]], "SHMEM",
-                                "shmem", "water", "totodile", "2")
+              dir (CI_LOCATION) {
+                run_ci("CI_shmem_water", "pr_shmem_1n2ppn_water.json")
+                run_ci("CI_shmem_water", "pr_shmem_2n1ppn_water.json")
               }
             }
           }
@@ -784,16 +797,16 @@ pipeline {
             script {
               dir (RUN_LOCATION) {
                 run_middleware([["psm3", null]], "oneCCL-GPU-v3", "onecclgpu",
-                               "gpu", "torchic", "1", null, null,
+                               "fire", "torchic", "1", null, null,
                                "FI_HMEM_DISABLE_P2P=1")
                 run_middleware([["verbs", null]], "oneCCL-GPU-v3", "onecclgpu",
-                                "gpu", "torchic", "1", null, null,
+                                "fire", "torchic", "1", null, null,
                                 "FI_HMEM_DISABLE_P2P=1")
                 run_middleware([["tcp", null]], "oneCCL-GPU-v3", "onecclgpu",
-                               "gpu", "torchic", "1", null, null,
+                               "fire", "torchic", "1", null, null,
                                "FI_HMEM_DISABLE_P2P=1")
                 run_middleware([["shm", null]], "oneCCL-GPU-v3", "onecclgpu",
-                               "gpu", "torchic", "1", null, null,
+                               "fire", "torchic", "1", null, null,
                                "FI_HMEM_DISABLE_P2P=1")
               }
             }
@@ -835,7 +848,7 @@ pipeline {
               dir (RUN_LOCATION) {
                 dmabuf_output = "${LOG_DIR}/DMABUF-Tests_verbs-rxm_dmabuf"
                 cmd = """ python3.9 runtests.py --test=dmabuf \
-                           --prov=verbs --util=rxm --build_hw=gpu"""
+                           --prov=verbs --util=rxm --build_hw=fire"""
                 slurm_batch("torchic", "1", "${dmabuf_output}_reg",
                             "${cmd}")
               }

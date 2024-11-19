@@ -948,6 +948,9 @@ static void test_efa_rdm_ep_use_zcpy_rx_impl(struct efa_resource *resource,
 
 	ep = container_of(resource->ep, struct efa_rdm_ep, base_ep.util_ep.ep_fid);
 
+	if (cuda_p2p_supported)
+		ep->hmem_p2p_opt = FI_HMEM_P2P_ENABLED;
+
 	/* Set sufficiently small max_msg_size */
 	assert_int_equal(fi_setopt(&resource->ep->fid, FI_OPT_ENDPOINT, FI_OPT_MAX_MSG_SIZE,
 			&max_msg_size, sizeof max_msg_size), 0);
@@ -956,7 +959,7 @@ static void test_efa_rdm_ep_use_zcpy_rx_impl(struct efa_resource *resource,
 	assert_int_equal(fi_setopt(&resource->ep->fid, FI_OPT_ENDPOINT, FI_OPT_SHARED_MEMORY_PERMITTED,
 			&shm_permitted, sizeof shm_permitted), 0);
 
-	assert_true(ep->max_msg_size == max_msg_size);
+	assert_true(ep->base_ep.max_msg_size == max_msg_size);
 
 	/* Enable EP */
 	assert_int_equal(fi_enable(resource->ep), 0);
@@ -965,11 +968,11 @@ static void test_efa_rdm_ep_use_zcpy_rx_impl(struct efa_resource *resource,
 
 	assert_int_equal(fi_getopt(&resource->ep->fid, FI_OPT_ENDPOINT, FI_OPT_INJECT_MSG_SIZE,
 			&inject_msg_size, &(size_t){sizeof inject_msg_size}), 0);
-	assert_int_equal(ep->inject_msg_size, inject_msg_size);
+	assert_int_equal(ep->base_ep.inject_msg_size, inject_msg_size);
 
 	assert_int_equal(fi_getopt(&resource->ep->fid, FI_OPT_ENDPOINT, FI_OPT_INJECT_RMA_SIZE,
 			&inject_rma_size, &(size_t){sizeof inject_rma_size}), 0);
-	assert_int_equal(ep->inject_rma_size, inject_rma_size);
+	assert_int_equal(ep->base_ep.inject_rma_size, inject_rma_size);
 
 	if (expected_use_zcpy_rx) {
 		assert_int_equal(inject_msg_size, efa_rdm_ep_domain(ep)->device->efa_attr.inline_buf_size);
@@ -1003,9 +1006,9 @@ void test_efa_rdm_ep_user_zcpy_rx_disabled(struct efa_resource **state)
 }
 
 /**
- * @brief Verify zcpy_rx is enabled if CUDA P2P is explictly disabled
+ * @brief Verify zcpy_rx is disabled if CUDA P2P is explictly disabled
  */
-void test_efa_rdm_ep_user_disable_p2p_zcpy_rx_happy(struct efa_resource **state)
+void test_efa_rdm_ep_user_disable_p2p_zcpy_rx_disabled(struct efa_resource **state)
 {
 	struct efa_resource *resource = *state;
 
@@ -1015,7 +1018,7 @@ void test_efa_rdm_ep_user_disable_p2p_zcpy_rx_happy(struct efa_resource **state)
 	resource->hints->mode = FI_MSG_PREFIX;
 	resource->hints->caps = FI_MSG;
 
-	test_efa_rdm_ep_use_zcpy_rx_impl(resource, true, false, true);
+	test_efa_rdm_ep_use_zcpy_rx_impl(resource, true, false, false);
 }
 
 /**
@@ -1107,6 +1110,46 @@ void test_efa_rdm_ep_zcpy_recv_cancel(struct efa_resource **state)
 	assert_int_equal(fi_recv(resource->ep, recv_buff.buff, recv_buff.size, fi_mr_desc(recv_buff.mr), FI_ADDR_UNSPEC, &cancel_context), 0);
 
 	assert_int_equal(fi_cancel((struct fid *)resource->ep, &cancel_context), -FI_EOPNOTSUPP);
+
+	/**
+	 * the buf is still posted to rdma-core, so unregistering mr can
+	 * return non-zero. Currently ignore this failure.
+	 */
+	(void) fi_close(&recv_buff.mr->fid);
+	free(recv_buff.buff);
+}
+
+/**
+ * @brief When user posts more than rx size fi_recv, we should return eagain and make sure
+ * there is no rx entry leaked
+ */
+void test_efa_rdm_ep_zcpy_recv_eagain(struct efa_resource **state)
+{
+	struct efa_resource *resource = *state;
+	struct efa_unit_test_buff recv_buff;
+	int i;
+	struct efa_rdm_ep *efa_rdm_ep;
+
+	resource->hints = efa_unit_test_alloc_hints(FI_EP_RDM);
+	assert_non_null(resource->hints);
+
+	resource->hints->caps = FI_MSG;
+
+	/* enable zero-copy recv mode in ep */
+	test_efa_rdm_ep_use_zcpy_rx_impl(resource, false, true, true);
+
+	efa_rdm_ep = container_of(resource->ep, struct efa_rdm_ep, base_ep.util_ep.ep_fid);
+
+	/* Construct a recv buffer with mr */
+	efa_unit_test_buff_construct(&recv_buff, resource, 16);
+
+	for (i = 0; i < efa_rdm_ep->base_ep.info->rx_attr->size; i++)
+		assert_int_equal(fi_recv(resource->ep, recv_buff.buff, recv_buff.size, fi_mr_desc(recv_buff.mr), FI_ADDR_UNSPEC, NULL), 0);
+
+	/* we should have rx number of rx entry before and after the extra recv post */
+	assert_true(efa_unit_test_get_dlist_length(&efa_rdm_ep->rxe_list) == efa_rdm_ep->base_ep.info->rx_attr->size);
+	assert_int_equal(fi_recv(resource->ep, recv_buff.buff, recv_buff.size, fi_mr_desc(recv_buff.mr), FI_ADDR_UNSPEC, NULL), -FI_EAGAIN);
+	assert_true(efa_unit_test_get_dlist_length(&efa_rdm_ep->rxe_list) == efa_rdm_ep->base_ep.info->rx_attr->size);
 
 	/**
 	 * the buf is still posted to rdma-core, so unregistering mr can

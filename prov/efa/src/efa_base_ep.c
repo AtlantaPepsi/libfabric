@@ -186,13 +186,24 @@ int efa_qp_create(struct efa_qp **qp, struct ibv_qp_init_attr_ex *init_attr_ex, 
 #endif
 		efa_attr.driver_qp_type = EFADV_QP_DRIVER_TYPE_SRD;
 #if HAVE_EFADV_SL
+		efa_attr.sl = EFA_QP_DEFAULT_SERVICE_LEVEL;
 		if (tclass == FI_TC_LOW_LATENCY)
-			efa_attr.sl = EFA_QP_DEFAULT_SERVICE_LEVEL;
+			efa_attr.sl = EFA_QP_LOW_LATENCY_SERVICE_LEVEL;
 #endif
 		(*qp)->ibv_qp = efadv_create_qp_ex(
 			init_attr_ex->pd->context, init_attr_ex, &efa_attr,
 			sizeof(struct efadv_qp_init_attr));
 	}
+
+#if HAVE_EFADV_SL
+	if (!(*qp)->ibv_qp && tclass == FI_TC_LOW_LATENCY) {
+		EFA_INFO(FI_LOG_EP_CTRL, "ibv_create_qp failed with sl %u, errno: %d. Retrying with default sl.\n", efa_attr.sl, errno);
+		efa_attr.sl = EFA_QP_DEFAULT_SERVICE_LEVEL;
+		(*qp)->ibv_qp = efadv_create_qp_ex(
+			init_attr_ex->pd->context, init_attr_ex, &efa_attr,
+			sizeof(struct efadv_qp_init_attr));
+	}
+#endif
 
 	if (!(*qp)->ibv_qp) {
 		EFA_WARN(FI_LOG_EP_CTRL, "ibv_create_qp failed. errno: %d\n", errno);
@@ -337,6 +348,11 @@ int efa_base_ep_construct(struct efa_base_ep *base_ep,
 	base_ep->efa_qp_enabled = false;
 	base_ep->qp = NULL;
 	base_ep->user_recv_qp = NULL;
+
+	base_ep->max_msg_size = info->ep_attr->max_msg_size;
+	base_ep->max_rma_size = info->ep_attr->max_msg_size;
+	base_ep->inject_msg_size = info->tx_attr->inject_size;
+	base_ep->inject_rma_size = info->tx_attr->inject_size;
 	return 0;
 }
 
