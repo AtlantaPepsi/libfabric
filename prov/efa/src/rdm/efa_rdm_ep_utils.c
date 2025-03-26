@@ -25,31 +25,6 @@ struct efa_ep_addr *efa_rdm_ep_raw_addr(struct efa_rdm_ep *ep)
 	return &ep->base_ep.src_addr;
 }
 
-const char *efa_rdm_ep_raw_addr_str(struct efa_rdm_ep *ep, char *buf, size_t *buflen)
-{
-	return ofi_straddr(buf, buflen, FI_ADDR_EFA, efa_rdm_ep_raw_addr(ep));
-}
-
-/**
- * @brief return peer's raw address in #efa_ep_addr
- *
- * @param[in] ep		end point
- * @param[in] addr 		libfabric address
- * @returns
- * If peer exists, return peer's raw addrress as pointer to #efa_ep_addr;
- * Otherwise, return NULL
- * @relates efa_rdm_peer
- */
-struct efa_ep_addr *efa_rdm_ep_get_peer_raw_addr(struct efa_rdm_ep *ep, fi_addr_t addr)
-{
-	struct efa_av *efa_av;
-	struct efa_conn *efa_conn;
-
-	efa_av = ep->base_ep.av;
-	efa_conn = efa_av_addr_to_conn(efa_av, addr);
-	return efa_conn ? efa_conn->ep_addr : NULL;
-}
-
 /**
  * @brief return peer's ahn
  *
@@ -67,21 +42,6 @@ int32_t efa_rdm_ep_get_peer_ahn(struct efa_rdm_ep *ep, fi_addr_t addr)
 	efa_av = ep->base_ep.av;
 	efa_conn = efa_av_addr_to_conn(efa_av, addr);
 	return efa_conn ? efa_conn->ah->ahn : -1;
-}
-
-/**
- * @brief return peer's raw address in a reable string
- *
- * @param[in] ep		end point
- * @param[in] addr 		libfabric address
- * @param[out] buf		a buffer tat to be used to store string
- * @param[in,out] buflen	length of `buf` as input. length of the string as output.
- * @relates efa_rdm_peer
- * @return a string with peer's raw address
- */
-const char *efa_rdm_ep_get_peer_raw_addr_str(struct efa_rdm_ep *ep, fi_addr_t addr, char *buf, size_t *buflen)
-{
-	return ofi_straddr(buf, buflen, FI_ADDR_EFA, efa_rdm_ep_get_peer_raw_addr(ep, addr));
 }
 
 /**
@@ -103,7 +63,7 @@ struct efa_rdm_peer *efa_rdm_ep_get_peer(struct efa_rdm_ep *ep, fi_addr_t addr)
 	util_av_entry = ofi_bufpool_get_ibuf(ep->base_ep.util_ep.av->av_entry_pool,
 	                                     addr);
 	av_entry = (struct efa_av_entry *)util_av_entry->data;
-	return av_entry->conn.ep_addr ? &av_entry->conn.rdm_peer : NULL;
+	return av_entry->conn.ep_addr ? av_entry->conn.rdm_peer : NULL;
 }
 
 /**
@@ -164,6 +124,7 @@ struct efa_rdm_ope *efa_rdm_ep_alloc_rxe(struct efa_rdm_ep *ep, fi_addr_t addr, 
 	rxe->op = op;
 	rxe->peer_rxe = NULL;
 	rxe->unexp_pkt = NULL;
+	rxe->rxe_map = NULL;
 	rxe->atomrsp_data = NULL;
 	rxe->bytes_read_total_len = 0;
 
@@ -205,7 +166,7 @@ struct efa_rdm_ope *efa_rdm_ep_alloc_rxe(struct efa_rdm_ep *ep, fi_addr_t addr, 
  * @param[in]	rxe	rxe that contain user buffer information
  * @param[in]	flags		user supplied flags passed to fi_recv
  */
-int efa_rdm_ep_post_user_recv_buf(struct efa_rdm_ep *ep, struct efa_rdm_ope *rxe, size_t flags)
+int efa_rdm_ep_post_user_recv_buf(struct efa_rdm_ep *ep, struct efa_rdm_ope *rxe, uint64_t flags)
 {
 	struct efa_rdm_pke *pkt_entry = NULL;
 	size_t rx_iov_offset = 0;
@@ -242,7 +203,7 @@ int efa_rdm_ep_post_user_recv_buf(struct efa_rdm_ep *ep, struct efa_rdm_ope *rxe
 	pkt_entry->payload_mr = rxe->desc[rx_iov_index];
 	pkt_entry->payload_size = ofi_total_iov_len(&rxe->iov[rx_iov_index], rxe->iov_count - rx_iov_index) - rx_iov_offset;
 
-	err = efa_rdm_pke_recvv(&pkt_entry, 1);
+	err = efa_rdm_pke_user_recvv(&pkt_entry, 1, flags);
 	if (OFI_UNLIKELY(err)) {
 		EFA_WARN(FI_LOG_EP_CTRL,
 			"failed to post user supplied buffer %d (%s)\n", -err,
@@ -561,6 +522,7 @@ ssize_t efa_rdm_ep_trigger_handshake(struct efa_rdm_ep *ep, struct efa_rdm_peer 
 	 */
 	txe->fi_flags = EFA_RDM_TXE_NO_COMPLETION | EFA_RDM_TXE_NO_COUNTER;
 	txe->msg_id = -1;
+	txe->internal_flags |= EFA_RDM_OPE_INTERNAL;
 
 	err = efa_rdm_ope_post_send(txe, EFA_RDM_EAGER_RTW_PKT);
 
@@ -599,6 +561,7 @@ ssize_t efa_rdm_ep_post_handshake(struct efa_rdm_ep *ep, struct efa_rdm_peer *pe
 	 * reset to desired flags (remove things like FI_DELIVERY_COMPLETE, and FI_COMPLETION)
 	 */
 	txe->fi_flags = EFA_RDM_TXE_NO_COMPLETION | EFA_RDM_TXE_NO_COUNTER;
+	txe->internal_flags |= EFA_RDM_OPE_INTERNAL;
 
 	pkt_entry = efa_rdm_pke_alloc(ep, ep->efa_tx_pkt_pool, EFA_RDM_PKE_FROM_EFA_TX_POOL);
 	if (OFI_UNLIKELY(!pkt_entry)) {
@@ -741,7 +704,11 @@ int efa_rdm_ep_bulk_post_internal_rx_pkts(struct efa_rdm_ep *ep)
 {
 	int i, err;
 
-	if (ep->efa_rx_pkts_to_post == 0)
+	/**
+	 * When efa_env.internal_rx_refill_threshold > efa_rdm_ep_get_rx_pool_size(ep),
+	 * we should always refill when the pool is empty.
+	 */
+	if (ep->efa_rx_pkts_to_post < MIN(efa_env.internal_rx_refill_threshold, efa_rdm_ep_get_rx_pool_size(ep)))
 		return 0;
 
 	assert(ep->efa_rx_pkts_to_post + ep->efa_rx_pkts_posted <= ep->efa_max_outstanding_rx_ops);

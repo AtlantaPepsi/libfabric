@@ -131,6 +131,7 @@ struct ofi_hmem_ops {
 				      const void *src, size_t size);
 	int (*get_dmabuf_fd)(const void *addr, uint64_t size, int *fd,
 			     uint64_t *offset);
+	int (*put_dmabuf_fd)(int fd);
 };
 
 extern struct ofi_hmem_ops hmem_ops[];
@@ -167,6 +168,7 @@ int rocr_dev_reg_copy_from_hmem(uint64_t handle, void *dest, const void *src,
 				size_t size);
 int rocr_hmem_get_dmabuf_fd(const void *addr, uint64_t size, int *dmabuf_fd,
 			    uint64_t *offset);
+int rocr_hmem_put_dmabuf_fd(int fd);
 
 int cuda_copy_to_dev(uint64_t device, void *dev, const void *host, size_t size);
 int cuda_copy_from_dev(uint64_t device, void *host, const void *dev, size_t size);
@@ -193,6 +195,7 @@ bool cuda_is_gdrcopy_enabled(void);
 bool cuda_is_dmabuf_supported(void);
 int cuda_get_dmabuf_fd(const void *addr, uint64_t size, int *fd,
 		       uint64_t *offset);
+int cuda_put_dmabuf_fd(int fd);
 
 void cuda_gdrcopy_to_dev(uint64_t handle, void *dev,
 			 const void *host, size_t size);
@@ -357,6 +360,11 @@ static inline int ofi_hmem_no_get_dmabuf_fd(const void *addr, uint64_t size,
 	return -FI_ENOSYS;
 }
 
+static inline int ofi_hmem_no_put_dmabuf_fd(int fd)
+{
+	return -FI_ENOSYS;
+}
+
 static inline bool ofi_hmem_p2p_disabled(void)
 {
 	return ofi_hmem_disable_p2p;
@@ -450,5 +458,6 @@ int ofi_hmem_dev_reg_copy_from_hmem(enum fi_hmem_iface iface, uint64_t handle,
 				    void *dest, const void *src, size_t size);
 int ofi_hmem_get_dmabuf_fd(enum fi_hmem_iface, const void *addr, uint64_t size,
 			   int *fd, uint64_t *offset);
+int ofi_hmem_put_dmabuf_fd(enum fi_hmem_iface iface, int fd);
 
 #endif /* _OFI_HMEM_H_ */

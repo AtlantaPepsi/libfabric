@@ -1366,6 +1366,13 @@ static int vrb_init_info(const struct fi_info **all_infos)
 	initialized = true;
 	*all_infos = NULL;
 
+	if (vrb_os_ini()) {
+		FI_WARN(&vrb_prov, FI_LOG_FABRIC,
+			"failed in OS specific device initialization\n");
+		ret = -FI_ENODATA;
+		goto done;
+	}
+
 	vrb_prof_func_start("vrb_os_mem_support");
 	vrb_os_mem_support(&vrb_gl_data.peer_mem_support,
 			   &vrb_gl_data.dmabuf_support);
@@ -1720,18 +1727,21 @@ static int vrb_handle_ib_ud_addr(const char *node, const char *service,
 	uint32_t fmt = FI_FORMAT_UNSPEC;
 	int svc = VERBS_IB_UD_NS_ANY_SERVICE, ret = FI_SUCCESS;
 
-	if (node && !ofi_str_toaddr(node, &fmt, &addr, &len) &&
-	    fmt == FI_ADDR_IB_UD) {
-		if (flags & FI_SOURCE) {
-			src_addr = addr;
-			VERBS_INFO_NODE_2_UD_ADDR(FI_LOG_CORE, node,
-						  svc, src_addr);
+	if (node && !ofi_str_toaddr(node, &fmt, &addr, &len)) {
+		if (fmt == FI_ADDR_IB_UD) {
+			if (flags & FI_SOURCE) {
+				src_addr = addr;
+				VERBS_INFO_NODE_2_UD_ADDR(FI_LOG_CORE, node,
+							  svc, src_addr);
+			} else {
+				dest_addr = addr;
+				VERBS_INFO_NODE_2_UD_ADDR(FI_LOG_CORE, node,
+							  svc, dest_addr);
+			}
+			node = NULL;
 		} else {
-			dest_addr = addr;
-			VERBS_INFO_NODE_2_UD_ADDR(FI_LOG_CORE, node,
-						  svc, dest_addr);
+			free(addr);
 		}
-		node = NULL;
 	}
 
 	if (!src_addr) {

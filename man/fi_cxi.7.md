@@ -80,7 +80,9 @@ The CXI provider supports FI_THREAD_SAFE and FI_THREAD_DOMAIN threading models.
 
 The CXI provider supports FI_WAIT_FD and FI_WAIT_POLLFD CQ wait object types.
 FI_WAIT_UNSPEC will default to FI_WAIT_FD. However FI_WAIT_NONE should achieve
-the lowest latency and reduce interrupt overhead.
+the lowest latency and reduce interrupt overhead. NOTE: A process may return
+from a epoll_wait/poll when provider progress is required and a CQ event may
+not be available.
 
 ## Additional Features
 
@@ -380,39 +382,24 @@ increase Request buffer space using the variables *FI_CXI_REQ_\**.
 
 ## Message Ordering
 
-The CXI provider supports the following ordering rules:
+Supported message ordering: FI_ORDER_SAS, FI_ORDER_WAW, FI_ORDER_RMA_WAW,
+FI_ORDER_RMA_RAR, FI_ORDER_ATOMIC_WAW, and FI_ORDER_ATOMIC_RAR.
 
-* All message Send operations are always ordered.
-* RMA Writes may be ordered by specifying *FI_ORDER_RMA_WAW*.
-* AMOs may be ordered by specifying *FI_ORDER_AMO_{WAW|WAR|RAW|RAR}*.
-* RMA Writes may be ordered with respect to AMOs by specifying *FI_ORDER_WAW*.
-  Fetching AMOs may be used to perform short reads that are ordered with
-  respect to RMA Writes.
+Note: Any FI_ORDER_*_{WAR,RAW} are not supported.
+
+Note: Relaxing the message ordering may result in improved performance.
+
+## Target Ordering
 
 Ordered RMA size limits are set as follows:
 
-* *max_order_waw_size* is -1. RMA Writes and non-fetching AMOs of any size are
-  ordered with respect to each other.
-* *max_order_raw_size* is -1. Fetching AMOs of any size are ordered with
-  respect to RMA Writes and non-fetching AMOs.
-* *max_order_war_size* is -1. RMA Writes and non-fetching AMOs of any size are
-  ordered with respect to fetching AMOs.
+* *max_order_waw_size* is -1. RMA Writes and AMO writes of any size are ordered with
+  respect to each other.
 
-## PCIe Ordering
+Note: Due to FI_ORDER_\*\_{WAR,RAW} not being supported, max_order_{raw,war}_size
+are forced to zero.
 
-Generally, PCIe writes are strictly ordered. As an optimization, PCIe TLPs may
-have the Relaxed Order (RO) bit set to allow writes to be reordered. Cassini
-sets the RO bit in PCIe TLPs when possible. Cassini sets PCIe RO as follows:
-
-* Ordering of messaging operations is established using completion events.
-  Therefore, all PCIe TLPs related to two-sided message payloads will have RO
-  set.
-* Every PCIe TLP associated with an unordered RMA or AMO operation will have RO
-  cleared.
-* PCIe TLPs associated with the last packet of an ordered RMA or AMO operation
-  will have RO cleared.
-* PCIe TLPs associated with the body packets (all except the last packet of an
-  operation) of an ordered RMA operation will have RO set.
+Note: Relaxing the target ordering may result in improved performance.
 
 ## Translation
 
@@ -974,6 +961,10 @@ offloading are met.
 
 The CXI provider checks for the following environment variables:
 
+*FI_CXI_MR_TARGET_ORDERING*
+:   MR target ordering (i.e. PCI ordering). Options: default, strict, or relaxed.
+    Recommendation is to leave at default behavior.
+
 *FI_CXI_ODP*
 :   Enables on-demand paging. If disabled, all DMA buffers are pinned.
     If enabled and mr_mode bits in the hints exclude FI_MR_ALLOCATED,
@@ -1301,6 +1292,10 @@ The CXI provider checks for the following environment variables:
 :   Max amount of time to poll when LE invalidate disabling an MR configured with MR
     match events.
 
+*FI_CXI_FORCE_DEV_REG_COPY*
+:   Force the CXI provider to use the HMEM device register copy routines. If not
+    supported, RDMA operations or memory registration will fail.
+
 Note: Use the fi_info utility to query provider environment variables:
 <code>fi_info -p cxi -e</code>
 
@@ -1528,11 +1523,6 @@ ret = fi_set_val(&alias_ep->fid, FI_OPT_CXI_SET_MSG_ORDER,
 if (ret)
     error;
 ```
-
-When an endpoint does not support FI_FENCE (e.g. optimized MR), a provider
-specific transmit flag, FI_CXI_WEAK_FENCE, may be specified on an alias EP
-to issue a FENCE operation to create a data ordering point for the alias.
-This is supported for one-sided operations only.
 
 Alias EP must be closed prior to closing the original EP.
 

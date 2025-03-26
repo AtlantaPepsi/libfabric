@@ -10,7 +10,6 @@
 #include "efa_base_ep.h"
 #include "efa_rdm_rxe_map.h"
 
-#define EFA_RDM_ERROR_MSG_BUFFER_LENGTH 1024
 
 /** @brief Information of a queued copy.
  *
@@ -182,11 +181,11 @@ struct efa_rdm_ep {
 
 	bool sendrecv_in_order_aligned_128_bytes; /**< whether to support in order send/recv of each aligned 128 bytes memory region */
 	bool write_in_order_aligned_128_bytes; /**< whether to support in order write of each aligned 128 bytes memory region */
-	char err_msg[EFA_RDM_ERROR_MSG_BUFFER_LENGTH]; /* A large enough buffer to store CQ/EQ error data used by e.g. fi_cq_readerr */
 	struct efa_rdm_pke **pke_vec;
 	struct dlist_entry entry;
 	/* the count of opes queued before handshake is made with their peers */
 	size_t ope_queued_before_handshake_cnt;
+	bool homogeneous_peers; /* peers always support the same capabilities in extra_info as this ep */
 };
 
 int efa_rdm_ep_flush_queued_blocking_copy_to_hmem(struct efa_rdm_ep *ep);
@@ -195,12 +194,6 @@ int efa_rdm_ep_flush_queued_blocking_copy_to_hmem(struct efa_rdm_ep *ep);
 #define efa_rdm_tx_flags(efa_rdm_ep) ((efa_rdm_ep)->base_ep.util_ep.tx_op_flags)
 
 struct efa_ep_addr *efa_rdm_ep_raw_addr(struct efa_rdm_ep *ep);
-
-const char *efa_rdm_ep_raw_addr_str(struct efa_rdm_ep *ep, char *buf, size_t *buflen);
-
-struct efa_ep_addr *efa_rdm_ep_get_peer_raw_addr(struct efa_rdm_ep *ep, fi_addr_t addr);
-
-const char *efa_rdm_ep_get_peer_raw_addr_str(struct efa_rdm_ep *ep, fi_addr_t addr, char *buf, size_t *buflen);
 
 struct efa_rdm_peer *efa_rdm_ep_get_peer(struct efa_rdm_ep *ep, fi_addr_t addr);
 
@@ -263,6 +256,8 @@ struct efa_domain *efa_rdm_ep_domain(struct efa_rdm_ep *ep)
 
 void efa_rdm_ep_post_internal_rx_pkts(struct efa_rdm_ep *ep);
 
+int efa_rdm_ep_bulk_post_internal_rx_pkts(struct efa_rdm_ep *ep);
+
 /**
  * @brief return whether this endpoint should write error cq entry for RNR.
  *
@@ -280,7 +275,7 @@ void efa_rdm_ep_post_internal_rx_pkts(struct efa_rdm_ep *ep);
 static inline
 bool efa_rdm_ep_should_write_rnr_completion(struct efa_rdm_ep *ep)
 {
-	return (efa_env.rnr_retry < EFA_RNR_INFINITE_RETRY) &&
+	return (ep->base_ep.rnr_retry < EFA_RNR_INFINITE_RETRY) &&
 		(ep->handle_resource_management == FI_RM_DISABLED);
 }
 
@@ -444,6 +439,12 @@ static inline int efa_rdm_attempt_to_sync_memops_ioc(struct efa_rdm_ep *ep, stru
 	}
 
 	return err;
+}
+
+static inline
+bool efa_rdm_ep_support_unsolicited_write_recv(struct efa_rdm_ep *ep)
+{
+	return ep->extra_info[0] & EFA_RDM_EXTRA_FEATURE_UNSOLICITED_WRITE_RECV;
 }
 
 #endif

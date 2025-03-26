@@ -109,6 +109,23 @@ bool efa_rdm_peer_support_rdma_write(struct efa_rdm_peer *peer)
 	       (peer->extra_info[0] & EFA_RDM_EXTRA_FEATURE_RDMA_WRITE);
 }
 
+/**
+ * @brief check for peer's unsolicited write support, assuming HANDSHAKE has already occurred
+ *
+ * @param[in] peer	A peer which we have already received a HANDSHAKE from
+ * @return bool		The peer's unsolicited write recv support
+ */
+static inline
+bool efa_rdm_peer_support_unsolicited_write_recv(struct efa_rdm_peer *peer)
+{
+	/* Unsolicited write recv is an extra feature defined in version 4 (the base version).
+	 * Because it is an extra feature, an EP will assume the peer does not support
+	 * it before a handshake packet was received.
+	 */
+	return (peer->flags & EFA_RDM_PEER_HANDSHAKE_RECEIVED) &&
+	       (peer->extra_info[0] & EFA_RDM_EXTRA_FEATURE_UNSOLICITED_WRITE_RECV);
+}
+
 static inline
 bool efa_rdm_peer_support_delivery_complete(struct efa_rdm_peer *peer)
 {
@@ -134,8 +151,9 @@ bool efa_rdm_peer_support_read_nack(struct efa_rdm_peer *peer)
 /**
  * @brief determine if both peers support RDMA read
  *
- * This function can only return true if a handshake packet has already been
- * exchanged, and the peer set the EFA_RDM_EXTRA_FEATURE_RDMA_READ flag.
+ * This function can only return true if peers are homogeneous,
+ * or a handshake packet has already been exchanged and the peer 
+ * set the EFA_RDM_EXTRA_FEATURE_RDMA_READ flag.
  * @params[in]		ep		Endpoint for communication with peer
  * @params[in]		peer		An EFA peer
  * @return		boolean		both self and peer support RDMA read
@@ -144,7 +162,7 @@ static inline
 bool efa_both_support_rdma_read(struct efa_rdm_ep *ep, struct efa_rdm_peer *peer)
 {
 	return efa_rdm_ep_support_rdma_read(ep) &&
-	       (peer->is_self || efa_rdm_peer_support_rdma_read(peer));
+	       (ep->homogeneous_peers || peer->is_self || efa_rdm_peer_support_rdma_read(peer));
 }
 
 /**
@@ -187,8 +205,9 @@ bool efa_rdm_interop_rdma_read(struct efa_rdm_ep *ep, struct efa_rdm_peer *peer)
 /**
  * @brief determine if both peers support RDMA write
  *
- * This function can only return true if a handshake packet has already been
- * exchanged, and the peer set the EFA_RDM_EXTRA_FEATURE_RDMA_WRITE flag.
+ * This function can only return true if peers are homogeneous, or 
+ * a handshake packet has already been exchanged and the peer set 
+ * the EFA_RDM_EXTRA_FEATURE_RDMA_WRITE flag.
  * @params[in]		ep		Endpoint for communication with peer
  * @params[in]		peer		An EFA peer
  * @return		boolean		both self and peer support RDMA write
@@ -197,7 +216,7 @@ static inline
 bool efa_both_support_rdma_write(struct efa_rdm_ep *ep, struct efa_rdm_peer *peer)
 {
 	return efa_rdm_ep_support_rdma_write(ep) &&
-	       (peer->is_self || efa_rdm_peer_support_rdma_write(peer));
+	       (ep->homogeneous_peers || peer->is_self || efa_rdm_peer_support_rdma_write(peer));
 }
 
 /**
@@ -209,7 +228,7 @@ bool efa_both_support_rdma_write(struct efa_rdm_ep *ep, struct efa_rdm_peer *pee
  * 1. the initial packets to a peer should include the raw address,
  * because the peer might not have ep's address in its address vector
  * causing the peer to be unable to send packet back. Normally, after
- * an endpoint received a hanshake packet from a peer, it can stop
+ * an endpoint received a handshake packet from a peer, it can stop
  * including raw address in packet header.
  *
  * 2. If the peer requested to keep the header length constant through

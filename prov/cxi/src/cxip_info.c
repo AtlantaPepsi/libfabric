@@ -249,8 +249,8 @@ struct fi_ep_attr cxip_ep_attr = {
 	.protocol = FI_PROTO_CXI,
 	.protocol_version = CXIP_WIRE_PROTO_VERSION,
 	.max_msg_size = CXIP_EP_MAX_MSG_SZ,
-	.max_order_raw_size = -1,
-	.max_order_war_size = -1,
+	.max_order_raw_size = 0,
+	.max_order_war_size = 0,
 	.max_order_waw_size = -1,
 	.mem_tag_format = FI_TAG_GENERIC >> (64 - CXIP_TAG_WIDTH),
 	.auth_key_size = sizeof(struct cxi_auth_key),
@@ -648,7 +648,6 @@ struct cxip_environment cxip_env = {
 	.disable_eq_hugetlb = false,
 	.zbcoll_radix = 2,
 	.cq_fill_percent = 50,
-	.enable_unrestricted_end_ro = true,
 	.rget_tc = FI_TC_UNSPEC,
 	.cacheline_size = CXIP_DEFAULT_CACHE_LINE_SIZE,
 	.coll_job_id = NULL,
@@ -670,6 +669,8 @@ struct cxip_environment cxip_env = {
 		CXIP_MR_CACHE_EVENTS_DISABLE_POLL_NSECS,
 	.mr_cache_events_disable_le_poll_nsecs =
 		CXIP_MR_CACHE_EVENTS_DISABLE_LE_POLL_NSECS,
+	.force_dev_reg_copy = false,
+	.mr_target_ordering = MR_ORDER_DEFAULT,
 };
 
 static void cxip_env_init(void)
@@ -741,11 +742,6 @@ static void cxip_env_init(void)
 			cxip_env.disable_host_register);
 	fi_param_get_bool(&cxip_prov, "disable_host_register",
 			  &cxip_env.disable_host_register);
-
-	fi_param_define(&cxip_prov, "enable_unrestricted_end_ro", FI_PARAM_BOOL,
-			"Default: %d", cxip_env.enable_unrestricted_end_ro);
-	fi_param_get_bool(&cxip_prov, "enable_unrestricted_end_ro",
-			  &cxip_env.enable_unrestricted_end_ro);
 
 	fi_param_define(&cxip_prov, "odp", FI_PARAM_BOOL,
 			"Enables on-demand paging (default %d).", cxip_env.odp);
@@ -1287,6 +1283,30 @@ static void cxip_env_init(void)
 			cxip_env.mr_cache_events_disable_le_poll_nsecs);
 	fi_param_get_size_t(&cxip_prov, "mr_cache_events_disable_le_poll_nsecs",
 			    &cxip_env.mr_cache_events_disable_le_poll_nsecs);
+
+	fi_param_define(&cxip_prov, "force_dev_reg_copy", FI_PARAM_BOOL,
+			"Force device register copy operations. Default: %d",
+			cxip_env.force_dev_reg_copy);
+	fi_param_get_bool(&cxip_prov, "force_dev_reg_copy",
+			  &cxip_env.force_dev_reg_copy);
+
+	fi_param_define(&cxip_prov, "mr_target_ordering", FI_PARAM_STRING,
+			"MR target ordering (i.e. PCI ordering). Options: default, strict, or relaxed. Recommendation is to leave at default behavior.");
+	fi_param_get_str(&cxip_prov, "mr_target_ordering", &param_str);
+
+	if (param_str) {
+		if (!strcmp(param_str, "default"))
+			cxip_env.mr_target_ordering = MR_ORDER_DEFAULT;
+		else if (!strcmp(param_str, "strict"))
+			cxip_env.mr_target_ordering = MR_ORDER_STRICT;
+		else if (!strcmp(param_str, "relaxed"))
+			cxip_env.mr_target_ordering = MR_ORDER_RELAXED;
+		else
+			CXIP_WARN("Unrecognized mr_target_ordering: %s\n",
+				  param_str);
+
+		param_str = NULL;
+	}
 
 	set_system_page_size();
 }

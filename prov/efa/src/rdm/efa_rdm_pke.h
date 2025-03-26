@@ -195,7 +195,7 @@ struct efa_rdm_pke {
 	_Alignas(EFA_RDM_PKE_ALIGNMENT) char wiredata[0];
 };
 
-#if defined(static_assert) && defined(__x86_64__)
+#if defined(static_assert)
 static_assert(sizeof (struct efa_rdm_pke) % EFA_RDM_PKE_ALIGNMENT == 0, "efa_rdm_pke alignment check");
 #endif
 
@@ -214,6 +214,8 @@ struct efa_rdm_pke *efa_rdm_pke_alloc(struct efa_rdm_ep *ep,
 void efa_rdm_pke_release_tx(struct efa_rdm_pke *pkt_entry);
 
 void efa_rdm_pke_release_rx(struct efa_rdm_pke *pkt_entry);
+
+void efa_rdm_pke_release_rx_list(struct efa_rdm_pke *pkt_entry);
 
 void efa_rdm_pke_release(struct efa_rdm_pke *pkt_entry);
 
@@ -236,6 +238,9 @@ int efa_rdm_pke_read(struct efa_rdm_pke *pkt_entry,
 
 ssize_t efa_rdm_pke_recvv(struct efa_rdm_pke **pke_vec,
 			  int pke_cnt);
+
+ssize_t efa_rdm_pke_user_recvv(struct efa_rdm_pke **pke_vec,
+			  int pke_cnt, uint64_t flags);
 
 int efa_rdm_pke_write(struct efa_rdm_pke *pkt_entry);
 #endif

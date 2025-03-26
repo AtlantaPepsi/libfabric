@@ -11,6 +11,7 @@
 #include "efa_rdm_rma.h"
 #include "efa_rdm_pke_cmd.h"
 #include "efa_cntr.h"
+#include "efa_rdm_tracepoint.h"
 
 int efa_rdm_rma_verified_copy_iov(struct efa_rdm_ep *ep, struct efa_rma_iov *rma,
 			      size_t count, uint32_t flags,
@@ -125,7 +126,7 @@ ssize_t efa_rdm_rma_post_read(struct efa_rdm_ep *ep, struct efa_rdm_ope *txe)
 	 * For local read (read from self ep), such handshake is not needed because we only
 	 * need to check the local ep's capabilities.
 	 */
-	if (!(txe->peer->is_self) && !(txe->peer->flags & EFA_RDM_PEER_HANDSHAKE_RECEIVED))
+	if (!ep->homogeneous_peers && !(txe->peer->is_self) && !(txe->peer->flags & EFA_RDM_PEER_HANDSHAKE_RECEIVED))
 		return efa_rdm_ep_enforce_handshake_for_txe(ep, txe);
 
 	/* Check p2p support. Cannot use device read when p2p is not available. */
@@ -173,6 +174,9 @@ ssize_t efa_rdm_rma_readmsg(struct fid_ep *ep, const struct fi_msg_rma *msg, uin
 	void *shm_desc[EFA_RDM_IOV_LIMIT];
 	void **tmp_desc;
 	struct util_srx_ctx *srx_ctx;
+
+	efa_rdm_tracepoint(read_begin_msg_context,
+			   (size_t) msg->context, (size_t) msg->addr);
 
 	EFA_DBG(FI_LOG_EP_DATA,
 	       "read iov_len: %lu flags: %lx\n",
@@ -356,16 +360,35 @@ ssize_t efa_rdm_rma_post_write(struct efa_rdm_ep *ep, struct efa_rdm_ope *txe)
 	bool delivery_complete_requested;
 	int ctrl_type, iface, use_p2p;
 	size_t max_eager_rtw_data_size;
+	char err_msg[EFA_ERROR_MSG_BUFFER_LENGTH] = {0};
 
 	/*
 	 * A handshake is required to choose the correct protocol (whether to use device write/read).
 	 * For local write (writing it self), this handshake is not required because we only need to
 	 * check one-side capability
 	 */
-	if (!(txe->peer->is_self) && !(txe->peer->flags & EFA_RDM_PEER_HANDSHAKE_RECEIVED))
+	if (!ep->homogeneous_peers && !(txe->peer->is_self) && !(txe->peer->flags & EFA_RDM_PEER_HANDSHAKE_RECEIVED))
 		return efa_rdm_ep_enforce_handshake_for_txe(ep, txe);
 
 	if (efa_rdm_rma_should_write_using_rdma(ep, txe, txe->peer)) {
+		/**
+		 * Unsolicited write recv is a feature that makes rdma-write with
+		 * imm not consume an rx buffer on the responder side, and this
+		 * feature requires consistent support status on both sides.
+		 */
+		if (!ep->homogeneous_peers && (txe->fi_flags & FI_REMOTE_CQ_DATA) && 
+			(efa_rdm_ep_support_unsolicited_write_recv(ep) != efa_rdm_peer_support_unsolicited_write_recv(txe->peer))) {
+			(void) efa_rdm_construct_msg_with_local_and_peer_information(ep, txe->addr, err_msg, "", EFA_ERROR_MSG_BUFFER_LENGTH);
+			EFA_WARN(FI_LOG_EP_DATA,
+				"Inconsistent support status detected on unsolicited write recv.\n"
+				"My support status: %d, peer support status: %d. %s.\n"
+				"This is usually caused by inconsistent efa driver, libfabric, or rdma-core versions.\n"
+				"Please use consistent software versions on both hosts, or disable the unsolicited write "
+				"recv feature by setting environment variable FI_EFA_USE_UNSOLICITED_WRITE_RECV=0\n",
+				efa_use_unsolicited_write_recv(), efa_rdm_peer_support_unsolicited_write_recv(txe->peer),
+				err_msg);
+			return -FI_EOPNOTSUPP;
+		}
 		efa_rdm_ope_prepare_to_post_write(txe);
 		return efa_rdm_ope_post_remote_write(txe);
 	}
@@ -383,7 +406,7 @@ ssize_t efa_rdm_rma_post_write(struct efa_rdm_ep *ep, struct efa_rdm_ope *txe)
 		 * handshake for write earlier.
 		 */
 
-		if (!(txe->peer->is_self) && !efa_rdm_peer_support_delivery_complete(txe->peer))
+		if (!ep->homogeneous_peers && !(txe->peer->is_self) && !efa_rdm_peer_support_delivery_complete(txe->peer))
 			return -FI_EOPNOTSUPP;
 
 		max_eager_rtw_data_size = efa_rdm_txe_max_req_data_capacity(ep, txe, EFA_RDM_DC_EAGER_RTW_PKT);
@@ -429,6 +452,9 @@ static inline ssize_t efa_rdm_generic_writemsg(struct efa_rdm_ep *efa_rdm_ep,
 	ssize_t err;
 	struct efa_rdm_ope *txe;
 	struct util_srx_ctx *srx_ctx;
+
+	efa_rdm_tracepoint(write_begin_msg_context,
+			   (size_t) msg->context, (size_t) msg->addr);
 
 	efa_perfset_start(efa_rdm_ep, perf_efa_tx);
 

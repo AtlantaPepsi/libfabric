@@ -16,18 +16,7 @@
 
 #define EFA_RDM_PROTOCOL_VERSION	(4)
 
-/* raw address format. (section 1.4) */
-#define EFA_GID_LEN	16
 
-struct efa_ep_addr {
-	uint8_t			raw[EFA_GID_LEN];
-	uint16_t		qpn;
-	uint16_t		pad;
-	uint32_t		qkey;
-	struct efa_ep_addr	*next;
-};
-
-#define EFA_EP_ADDR_LEN sizeof(struct efa_ep_addr)
 
 /*
  * Extra Feature/Request Flags (section 2.1)
@@ -40,7 +29,8 @@ struct efa_ep_addr {
 #define EFA_RDM_EXTRA_FEATURE_RDMA_WRITE		BIT_ULL(5)
 #define EFA_RDM_EXTRA_FEATURE_READ_NACK		BIT_ULL(6)
 #define EFA_RDM_EXTRA_FEATURE_REQUEST_USER_RECV_QP	BIT_ULL(7)
-#define EFA_RDM_NUM_EXTRA_FEATURE_OR_REQUEST		8
+#define EFA_RDM_EXTRA_FEATURE_UNSOLICITED_WRITE_RECV	BIT_ULL(8)
+#define EFA_RDM_NUM_EXTRA_FEATURE_OR_REQUEST		9
 /*
  * The length of 64-bit extra_info array used in efa_rdm_ep
  * and efa_rdm_peer
@@ -114,7 +104,7 @@ struct efa_ep_addr {
 #define EFA_RDM_RUNT_PKT_END		148
 #define EFA_RDM_EXTRA_REQ_PKT_END   	148
 
-#if defined(static_assert) && defined(__x86_64__)
+#if defined(static_assert)
 #define EFA_RDM_ENSURE_HEADER_SIZE(hdr, size)	\
 	static_assert(sizeof (struct hdr) == (size), #hdr " size check")
 #else

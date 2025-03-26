@@ -58,7 +58,17 @@ void efa_rdm_txe_construct(struct efa_rdm_ope *txe,
 	txe->cq_entry.len = ofi_total_iov_len(txe->iov, txe->iov_count);
 	txe->cq_entry.buf = OFI_LIKELY(txe->cq_entry.len > 0) ? txe->iov[0].iov_base : NULL;
 
-	if (ep->base_ep.info->mode & FI_MSG_PREFIX) {
+	/*
+	 * txe->iov_count is 0 only when posting handshake packets
+	 *
+	 * It's a bit silly to allocate extra header before the contents
+	 * of the handshake packet and then consume that here. So instead
+	 * just don't consume the prefix header if iov_count is 0.
+	 *
+	 * A send or RMA or atomic call from the application cannot have
+	 * iov_count 0, so this is safe.
+	 */
+	if (txe->iov_count && ep->base_ep.info->mode & FI_MSG_PREFIX) {
 		ofi_consume_iov_desc(txe->iov, txe->desc, &txe->iov_count, ep->msg_prefix_size);
 	}
 	txe->total_len = ofi_total_iov_len(txe->iov, txe->iov_count);
@@ -156,6 +166,9 @@ void efa_rdm_rxe_release_internal(struct efa_rdm_ope *rxe)
 		dlist_remove(&rxe->peer_entry);
 
 	dlist_remove(&rxe->ep_entry);
+
+	if (rxe->rxe_map)
+		efa_rdm_rxe_map_remove(rxe->rxe_map, rxe->msg_id, rxe->addr, rxe);
 
 	for (i = 0; i < rxe->iov_count; i++) {
 		if (rxe->mr[i]) {
@@ -556,6 +569,7 @@ void efa_rdm_rxe_handle_error(struct efa_rdm_ope *rxe, int err, int prov_errno)
 	struct dlist_entry *tmp;
 	struct efa_rdm_pke *pkt_entry;
 	int write_cq_err;
+	char err_msg[EFA_ERROR_MSG_BUFFER_LENGTH] = {0};
 
 	assert(rxe->type == EFA_RDM_RXE);
 
@@ -592,7 +606,7 @@ void efa_rdm_rxe_handle_error(struct efa_rdm_ope *rxe, int err, int prov_errno)
 		dlist_remove(&rxe->queued_entry);
 
 	if (rxe->unexp_pkt) {
-		efa_rdm_pke_release_rx(rxe->unexp_pkt);
+		efa_rdm_pke_release_rx_list(rxe->unexp_pkt);
 		rxe->unexp_pkt = NULL;
 	}
 
@@ -603,8 +617,10 @@ void efa_rdm_rxe_handle_error(struct efa_rdm_ope *rxe, int err, int prov_errno)
 	err_entry.data = rxe->cq_entry.data;
 	err_entry.tag = rxe->cq_entry.tag;
 	if (OFI_UNLIKELY(efa_rdm_write_error_msg(ep, rxe->addr, prov_errno,
-	                                         &err_entry.err_data, &err_entry.err_data_size))) {
+	                                         err_msg, &err_entry.err_data_size))) {
 		err_entry.err_data_size = 0;
+	} else {
+		err_entry.err_data = err_msg;
 	}
 
 	EFA_WARN(FI_LOG_CQ, "err: %d, message: %s (%d)\n",
@@ -620,6 +636,13 @@ void efa_rdm_rxe_handle_error(struct efa_rdm_ope *rxe, int err, int prov_errno)
 	 * be freed once all packets are accounted for.
 	 */
 	//efa_rdm_rxe_release(rxe);
+
+	if (rxe->internal_flags & EFA_RDM_OPE_INTERNAL) {
+		EFA_WARN(FI_LOG_CQ,
+			"Writing eq error for rxe from internal operations\n");
+		efa_base_ep_write_eq_error(&ep->base_ep, err, prov_errno);
+		return;
+	}
 
 	efa_cntr_report_error(&ep->base_ep.util_ep, err_entry.flags);
 	write_cq_err = ofi_cq_write_error(util_cq, &err_entry);
@@ -660,6 +683,7 @@ void efa_rdm_txe_handle_error(struct efa_rdm_ope *txe, int err, int prov_errno)
 	struct dlist_entry *tmp;
 	struct efa_rdm_pke *pkt_entry;
 	int write_cq_err;
+	char err_msg[EFA_ERROR_MSG_BUFFER_LENGTH] = {0};
 
 	ep = txe->ep;
 	memset(&err_entry, 0, sizeof(err_entry));
@@ -695,8 +719,10 @@ void efa_rdm_txe_handle_error(struct efa_rdm_ope *txe, int err, int prov_errno)
 	err_entry.data = txe->cq_entry.data;
 	err_entry.tag = txe->cq_entry.tag;
 	if (OFI_UNLIKELY(efa_rdm_write_error_msg(ep, txe->addr, prov_errno,
-	                                         &err_entry.err_data, &err_entry.err_data_size))) {
+	                                         err_msg, &err_entry.err_data_size))) {
 		err_entry.err_data_size = 0;
+	} else {
+		err_entry.err_data = err_msg;
 	}
 
 	EFA_WARN(FI_LOG_CQ, "err: %d, message: %s (%d)\n",
@@ -714,6 +740,13 @@ void efa_rdm_txe_handle_error(struct efa_rdm_ope *txe, int err, int prov_errno)
 	 * be freed once all packets are accounted for.
 	 */
 	//efa_rdm_txe_release(txe);
+
+	if (txe->internal_flags & EFA_RDM_OPE_INTERNAL) {
+		EFA_WARN(FI_LOG_CQ,
+			"Writing eq error for txe from internal operations\n");
+		efa_base_ep_write_eq_error(&ep->base_ep, err, prov_errno);
+		return;
+	}
 
 	efa_cntr_report_error(&ep->base_ep.util_ep, txe->cq_entry.flags);
 	write_cq_err = ofi_cq_write_error(util_cq, &err_entry);
@@ -937,7 +970,7 @@ void efa_rdm_txe_report_completion(struct efa_rdm_ope *txe)
  * 	If the txe requested delivery complete, "all the data has been sent"
  *      happens when txe received a RECEIPT packet from receiver/write responder
  *
- * 	If the txe requested delivery complete, "all the data has been sent"
+ * 	If the txe requested transmit complete, "all the data has been sent"
  *      happens when the send completion of all packets that contains data has been
  *      received.
  *
@@ -1064,12 +1097,6 @@ void efa_rdm_ope_handle_recv_completed(struct efa_rdm_ope *ope)
 		assert(rxe->op == ofi_op_msg || rxe->op == ofi_op_tagged);
 
 		efa_rdm_rxe_report_completion(rxe);
-	}
-
-	if (ope->internal_flags & EFA_RDM_OPE_READ_NACK) {
-		assert(ope->type == EFA_RDM_RXE);
-		/* Apply to both DC and non-DC */
-		efa_rdm_rxe_map_remove(&ope->ep->rxe_map, ope->msg_id, ope->peer->efa_fiaddr, ope);
 	}
 
 	/* As can be seen, this function does not release rxe when
@@ -1665,6 +1692,7 @@ int efa_rdm_rxe_post_local_read_or_queue(struct efa_rdm_ope *rxe,
 	}
 
 	txe->local_read_pkt_entry = pkt_entry;
+	txe->internal_flags |= EFA_RDM_OPE_INTERNAL;
 	err = efa_rdm_ope_post_remote_read_or_queue(txe);
 	/* The rx pkts are held until the local read completes */
 	if (err)

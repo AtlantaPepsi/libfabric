@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2014 Intel Corporation, Inc. All rights reserved.
  * Copyright (c) 2016 Cisco Systems, Inc. All rights reserved.
- * Copyright (c) 2020-2024 Hewlett Packard Enterprise Development LP
+ * Copyright (c) 2020-2025 Hewlett Packard Enterprise Development LP
  * Support for accelerated collective reductions.
  */
 
@@ -186,7 +186,8 @@ struct cxip_coll_hdr {
  * properly for network transmission.
  */
 struct red_pkt {
-	uint8_t pad[5];			/* size  5b offset  0b */
+	uint8_t pad[1];			/* size  1b offset  0b */
+	uint32_t sender_rank;		/* size  4b offset  1b */
 	struct cxip_coll_hdr hdr;	/* size 12b offset  5b */
 	uint8_t data[32];		/* size 32b offset 17b */
 } __attribute__((__packed__));		/* size 49b */
@@ -262,9 +263,15 @@ void check_red_pkt(void)
 		err++;
 	}
 	len = sizeof(pkt.pad);
-	exp = 5;
+	exp = 1;
 	if (len != exp) {
 		TRACE_PKT("sizeof(pkt.pad) = %ld, exp %ld\n", len, exp);
+		err++;
+	}
+	len = sizeof(pkt.sender_rank);
+	exp = 4;
+	if (len != exp) {
+		TRACE_PKT("sizeof(pkt.sender_rank) = %ld, exp %ld\n", len, exp);
 		err++;
 	}
 	len = sizeof(pkt.hdr);
@@ -353,6 +360,9 @@ void _dump_red_pkt(struct red_pkt *pkt, char *dir)
 #define COLL_OPCODE_BIT_AND		0x01
 #define COLL_OPCODE_BIT_OR		0x02
 #define COLL_OPCODE_BIT_XOR		0x03
+#define COLL_OPCODE_LOG_AND		0x04
+#define COLL_OPCODE_LOG_OR		0x05
+#define COLL_OPCODE_LOG_XOR		0x06
 #define COLL_OPCODE_INT_MIN		0x10
 #define COLL_OPCODE_INT_MAX		0x11
 #define COLL_OPCODE_INT_MINMAXLOC	0x12
@@ -401,11 +411,17 @@ void cxip_coll_populate_opcodes(void)
 	_int8_16_32_op_to_opcode[FI_BOR] = COLL_OPCODE_BIT_OR;
 	_int8_16_32_op_to_opcode[FI_BAND] = COLL_OPCODE_BIT_AND;
 	_int8_16_32_op_to_opcode[FI_BXOR] = COLL_OPCODE_BIT_XOR;
+	_int8_16_32_op_to_opcode[FI_LOR] = COLL_OPCODE_LOG_OR;
+	_int8_16_32_op_to_opcode[FI_LAND] = COLL_OPCODE_LOG_AND;
+	_int8_16_32_op_to_opcode[FI_LXOR] = COLL_OPCODE_LOG_XOR;
 
 	/* operations supported by 32, 16, and 8 bit unsigned int operands */
 	_uint8_16_32_op_to_opcode[FI_BOR] = COLL_OPCODE_BIT_OR;
 	_uint8_16_32_op_to_opcode[FI_BAND] = COLL_OPCODE_BIT_AND;
 	_uint8_16_32_op_to_opcode[FI_BXOR] = COLL_OPCODE_BIT_XOR;
+	_uint8_16_32_op_to_opcode[FI_LOR] = COLL_OPCODE_LOG_OR;
+	_uint8_16_32_op_to_opcode[FI_LAND] = COLL_OPCODE_LOG_AND;
+	_uint8_16_32_op_to_opcode[FI_LXOR] = COLL_OPCODE_LOG_XOR;
 
 	/* operations supported by 64 bit signed int operands */
 	_int64_op_to_opcode[FI_MIN] = COLL_OPCODE_INT_MIN;
@@ -417,6 +433,9 @@ void cxip_coll_populate_opcodes(void)
 	_uint64_op_to_opcode[FI_BOR] = COLL_OPCODE_BIT_OR;
 	_uint64_op_to_opcode[FI_BAND] = COLL_OPCODE_BIT_AND;
 	_uint64_op_to_opcode[FI_BXOR] = COLL_OPCODE_BIT_XOR;
+	_uint64_op_to_opcode[FI_LOR] = COLL_OPCODE_LOG_OR;
+	_uint64_op_to_opcode[FI_LAND] = COLL_OPCODE_LOG_AND;
+	_uint64_op_to_opcode[FI_LXOR] = COLL_OPCODE_LOG_XOR;
 
 	/* operations supported by 64 bit double operands */
 	_flt_op_to_opcode[FI_MIN] = COLL_OPCODE_FLT_MINNUM;
@@ -429,6 +448,9 @@ void cxip_coll_populate_opcodes(void)
 	_cxi_op_to_redtype[COLL_OPCODE_BIT_OR] = REDTYPE_INT;
 	_cxi_op_to_redtype[COLL_OPCODE_BIT_AND] = REDTYPE_INT;
 	_cxi_op_to_redtype[COLL_OPCODE_BIT_XOR] = REDTYPE_INT;
+	_cxi_op_to_redtype[COLL_OPCODE_LOG_OR] = REDTYPE_INT;
+	_cxi_op_to_redtype[COLL_OPCODE_LOG_AND] = REDTYPE_INT;
+	_cxi_op_to_redtype[COLL_OPCODE_LOG_XOR] = REDTYPE_INT;
 	_cxi_op_to_redtype[COLL_OPCODE_INT_MIN] = REDTYPE_INT;
 	_cxi_op_to_redtype[COLL_OPCODE_INT_MAX] = REDTYPE_INT;
 	_cxi_op_to_redtype[COLL_OPCODE_INT_SUM] = REDTYPE_INT;
@@ -915,6 +937,7 @@ static void _coll_rx_req_report(struct cxip_req *req)
 			req->coll.coll_pte->buf_low_water = cnt;
 		if (cnt <= 0) {
 			CXIP_WARN("COLL buffers exhausted\n");
+			TRACE_DEBUG("COLL buffers exhausted\n");
 			// TODO set flag to shut this down
 		}
 		ofi_atomic_inc32(&coll_pte->buf_swap_cnt);
@@ -972,7 +995,6 @@ static void _coll_rx_progress(struct cxip_req *req,
 	req->coll.isred = true;
 	req->discard = mc_obj->rx_discard;
 	reduction = &mc_obj->reduction[pkt->hdr.cookie.red_id];
-	TRACE_PKT("Valid reduction packet\n");
 
 #if ENABLE_DEBUG
 	/* Test case, simulate packet dropped in-flight */
@@ -986,6 +1008,8 @@ static void _coll_rx_progress(struct cxip_req *req,
 		CXIP_INFO("pre-rearm pkt dropped\n");
 		return;
 	}
+
+	TRACE_PKT("valid reduction packet from rank %u\n", pkt->sender_rank);
 
 	/* Progress the reduction */
 	_dump_red_pkt(pkt, "recv");
@@ -1246,8 +1270,8 @@ static int _coll_add_buffers(struct cxip_coll_pte *coll_pte, size_t size,
 			ret = -FI_ENOMEM;
 			goto out;
 		}
-		ret = cxip_map(coll_pte->ep_obj->domain, (void *)buf->buffer,
-			       size, 0, &buf->cxi_md);
+		ret = cxip_ep_obj_map(coll_pte->ep_obj, (void *)buf->buffer,
+				      size, 0, &buf->cxi_md);
 		if (ret)
 			goto del_msg;
 		buf->bufsiz = size;
@@ -1502,6 +1526,26 @@ static void _reduce(struct cxip_coll_data *accum,
 			accum->intval.ival[i] ^= coll_data->intval.ival[i];
 		/* overflow not possible */
 		break;
+	case COLL_OPCODE_LOG_AND:
+		for (i = 0; i < 4; i++)
+			accum->intval.ival[i] =	(accum->intval.ival[i] &&
+			                         coll_data->intval.ival[i]);
+		/* overflow not possible */
+		break;
+	case COLL_OPCODE_LOG_OR:
+		for (i = 0; i < 4; i++)
+			accum->intval.ival[i] =	(accum->intval.ival[i] ||
+			                         coll_data->intval.ival[i]);
+		/* overflow not possible */
+		break;
+	case COLL_OPCODE_LOG_XOR:
+		for (i = 0; i < 4; i++)
+		        accum->intval.ival[i] = ((accum->intval.ival[i] &&
+                                                  !coll_data->intval.ival[i])
+                                                  || (!accum->intval.ival[i] &&
+                                                  coll_data->intval.ival[i]));
+		/* overflow not possible */
+		break;
 	case COLL_OPCODE_INT_MIN:
 		for (i = 0; i < 4; i++)
 			if (accum->intval.ival[i] > coll_data->intval.ival[i])
@@ -1754,6 +1798,7 @@ int cxip_coll_send_red_pkt(struct cxip_coll_reduction *reduction,
 	pkt->hdr.cookie.mcast_id = reduction->mc_obj->mcast_addr;
 	pkt->hdr.cookie.red_id = reduction->red_id;
 	pkt->hdr.cookie.magic = MAGIC;
+	pkt->sender_rank = reduction->mc_obj->mynode_idx;
 
 	if (coll_data) {
 		pkt->hdr.redcnt = coll_data->red_cnt;
@@ -2021,7 +2066,9 @@ bool _is_red_timed_out(struct cxip_coll_reduction *reduction)
 			    reduction->red_id);
 		return true;
 	}
-	return _tsexp(&reduction->tv_expires);
+
+	/* disable timeout logic for now */
+	return false;
 }
 
 /* Root node state machine progress.
@@ -2103,6 +2150,9 @@ static void _progress_root(struct cxip_coll_reduction *reduction,
 		if (ret)
 			SET_RED_RC(reduction->accum.red_rc,
 				   CXIP_COLL_RC_TX_FAILURE);
+	} else {
+		TRACE_DEBUG("incomplete reduction (recvd: %d, expected: %lu)\n",
+			    reduction->accum.red_cnt, mc_obj->av_set_obj->fi_addr_cnt);
 	}
 
 post_complete:
@@ -2704,13 +2754,17 @@ static void _curl_delete_mc_obj(struct cxip_coll_mc *mc_obj);
 static void _cxip_delete_mcast_cb(struct cxip_curl_handle *handle);
 
 /* Close multicast collective object */
-static void _close_mc(struct cxip_coll_mc *mc_obj, bool delete)
+static void _close_mc(struct cxip_coll_mc *mc_obj, bool delete, bool has_error)
 {
 	int count;
 
 	if (!mc_obj)
 		return;
 	TRACE_JOIN("%s starting MC cleanup\n", __func__);
+
+	mc_obj->has_closed = true;
+	mc_obj->has_error = has_error;
+
 	/* clear the mcast_addr -> mc_obj reference*/
 	ofi_idm_clear(&mc_obj->ep_obj->coll.mcast_map, mc_obj->mcast_addr);
 	mc_obj->ep_obj->coll.is_hwroot = false;
@@ -2739,10 +2793,18 @@ static void _close_mc(struct cxip_coll_mc *mc_obj, bool delete)
 			cxip_env.coll_fm_timeout_msec/1000,
 			(cxip_env.coll_fm_timeout_msec%1000)*1000000};
 
+		if (!mc_obj->has_error)
+			mc_obj->close_state = -FI_EAGAIN;
+
 		_tsset(&mc_obj->curlexpires, &expires);
 		_curl_delete_mc_obj(mc_obj);
-	} else
-		free(mc_obj);
+	} else {
+		if (mc_obj->has_error) {
+			free(mc_obj);
+		} else {
+			mc_obj->close_state = FI_SUCCESS;
+		}
+	}
 }
 
 /* The user can close an individual collective MC address. It must do so on
@@ -2752,11 +2814,37 @@ static void _close_mc(struct cxip_coll_mc *mc_obj, bool delete)
 static int _fi_close_mc(struct fid *fid)
 {
 	struct cxip_coll_mc *mc_obj;
+	int ret = FI_SUCCESS;
 
 	TRACE_JOIN("%s: closing MC\n", __func__);
 	mc_obj = container_of(fid, struct cxip_coll_mc, mc_fid.fid);
-	_close_mc(mc_obj, true);
-	return FI_SUCCESS;
+	if (!mc_obj) {
+		TRACE_JOIN("%s: MC object is null\n", __func__);
+		return ret;
+	} else if (mc_obj->has_closed) {
+		TRACE_JOIN("%s: close already called before\n", __func__);
+		return ret;
+	} else if (mc_obj->has_error) {
+		TRACE_JOIN("%s: encounted an error earlier\n", __func__);
+		return ret;
+	}
+
+	_close_mc(mc_obj, true, false);
+	while (mc_obj && (ret = mc_obj->close_state) == -FI_EAGAIN) {
+		ret = cxip_curl_progress(NULL);
+		if (ret == -FI_EAGAIN) {
+			usleep(10);
+			continue;
+		}
+		if (ret < 0 && ret != -FI_ENODATA) {
+			TRACE_JOIN("%s: Curl progress failed, error=%d\n", __func__, ret);
+			break;
+		}
+		usleep(10);
+	}
+	free(mc_obj);
+
+	return ret;
 }
 
 /* multicast object libfabric functions */
@@ -2986,6 +3074,11 @@ static int _initialize_mc(void *ptr)
 	_coll_metrics.ep_data.isroot =
 		mc_obj->hwroot_idx == mc_obj->mynode_idx;
 
+	/* Initially set close states to success */
+	mc_obj->close_state = FI_SUCCESS;
+	mc_obj->has_closed = false;
+	mc_obj->has_error = false;
+
 	/* Return information to the caller */
 	jstate->mc_obj = mc_obj;
 	*jstate->mc = &mc_obj->mc_fid;
@@ -2996,7 +3089,7 @@ static int _initialize_mc(void *ptr)
 
 fail:
 	jstate->prov_errno = FI_CXI_ERRNO_JOIN_FAIL_PTE;
-	_close_mc(mc_obj, true);
+	_close_mc(mc_obj, true, true);
 	return ret;
 }
 
@@ -3076,7 +3169,11 @@ quit:
 		TRACE_JOIN("CURL delete mcast %d failed\n",
 			   mc_obj->mcast_addr);
 		free(curl_usrptr);
-		free(mc_obj);
+		if (mc_obj->has_error) {
+			free(mc_obj);
+		} else {
+			mc_obj->close_state = ret;
+		}
 	}
 }
 
@@ -3102,7 +3199,11 @@ static void _cxip_delete_mcast_cb(struct cxip_curl_handle *handle)
 	case 201:
 		TRACE_JOIN("callback: %ld SUCCESS MCAST DELETED\n",
 			   handle->status);
-		free(mc_obj);
+		if (mc_obj->has_error) {
+			free(mc_obj);
+		} else {
+			mc_obj->close_state = FI_SUCCESS;
+		}
 		break;
 	case 409:
 		TRACE_JOIN("callback: delete mcast failed: %ld '%s'\n",
@@ -3110,7 +3211,11 @@ static void _cxip_delete_mcast_cb(struct cxip_curl_handle *handle)
 
 		if (_tsexp(&mc_obj->curlexpires)) {
 			TRACE_JOIN("callback: FM expired\n");
-			free(mc_obj);
+			if (mc_obj->has_error) {
+				free(mc_obj);
+			} else {
+				mc_obj->close_state = FI_CXI_ERRNO_JOIN_CURL_TIMEOUT;
+			}
 			break;
 		}
 		/* try again */
@@ -3118,7 +3223,11 @@ static void _cxip_delete_mcast_cb(struct cxip_curl_handle *handle)
 		break;
 	default:
 		TRACE_JOIN("callback: %ld unknown status\n", handle->status);
-		free(mc_obj);
+		if (mc_obj->has_error) {
+			free(mc_obj);
+		} else {
+			mc_obj->close_state = FI_CXI_ERRNO_JOIN_CURL_FAILED;
+		}
 		break;
 	}
 	/* free json memory */
@@ -4209,7 +4318,7 @@ void cxip_coll_close(struct cxip_ep_obj *ep_obj)
 	while (!dlist_empty(&ep_obj->coll.mc_list)) {
 		dlist_pop_front(&ep_obj->coll.mc_list,
 				struct cxip_coll_mc, mc_obj, entry);
-		_close_mc(mc_obj, false);
+		_close_mc(mc_obj, false, true);
 	}
 }
 

@@ -191,6 +191,7 @@ struct ft_opts {
 	size_t transfer_size;
 	size_t max_msg_size;
 	size_t inject_size;
+	size_t min_multi_recv_size;
 	int window_size;
 	int av_size;
 	int verbose;
@@ -250,7 +251,7 @@ extern size_t buf_size, tx_size, rx_size, tx_mr_size, rx_mr_size;
 extern int tx_fd, rx_fd;
 extern int timeout;
 
-extern struct fi_context tx_ctx, rx_ctx;
+extern struct fi_context2 tx_ctx, rx_ctx;
 extern uint64_t remote_cq_data;
 
 extern uint64_t tx_seq, rx_seq, tx_cq_cntr, rx_cq_cntr;
@@ -629,11 +630,9 @@ int ft_get_cq_comp(struct fid_cq *cq, uint64_t *cur, uint64_t total, int timeout
 int ft_get_cntr_comp(struct fid_cntr *cntr, uint64_t total, int timeout);
 
 int ft_recvmsg(struct fid_ep *ep, fi_addr_t fi_addr,
-		size_t size, void *ctx, int flags);
+	       void *buf, size_t size, void *ctx, uint64_t flags);
 int ft_sendmsg(struct fid_ep *ep, fi_addr_t fi_addr,
-	       void *buf, size_t size, void *ctx, int flags);
-int ft_writemsg(struct fid_ep *ep, fi_addr_t fi_addr, void *buf, size_t size,
-		void *ctx, struct fi_rma_iov *remote, int flags);
+	       void *buf, size_t size, void *ctx, uint64_t flags);
 int ft_tx_msg(struct fid_ep *ep, fi_addr_t fi_addr,
 	      void *buf, size_t size, void *ctx, uint64_t flags);
 int ft_cq_read_verify(struct fid_cq *cq, void *op_context);

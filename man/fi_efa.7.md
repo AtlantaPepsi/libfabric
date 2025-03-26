@@ -39,7 +39,9 @@ The following features are supported:
   message size of the MTU of the underlying hardware (approximately 8 KiB).
 
 *Address vectors*
-: The provider supports *FI_AV_TABLE* and *FI_AV_MAP* address vector types.
+: The provider supports *FI_AV_TABLE*. *FI_AV_MAP* was deprecated in Libfabric 2.x.
+  Applications can still use *FI_AV_MAP* to create an address vector. But the EFA
+  provider implementation will print a warning and switch to *FI_AV_TABLE*.
   *FI_EVENT* is unsupported.
 
 *Completion events*
@@ -84,7 +86,7 @@ No support for counters for the DGRAM endpoint.
 
 No support for inject.
 
-## [zero-copy receive mode](../prov/efa/docs/efa_rdm_protocol_v4.md#48-user-receive-qp-feature--request-and-zero-copy-receive)
+## Zero-copy receive mode
 - The receive operation cannot be cancelled via `fi_cancel()`.
 - Zero-copy receive mode can be enabled only if SHM transfer is disabled.
 - Unless the application explicitly disables P2P, e.g. via FI_HMEM_P2P_DISABLED,
@@ -113,7 +115,8 @@ provider for AWS Neuron or Habana SynapseAI.
   these operations are assisted by hardware support (return value is false).
 
 *FI_OPT_EFA_USE_DEVICE_RDMA - bool*
-: Only available if the application selects a libfabric API version >= 1.18.
+: This option only applies to the fi_setopt() call.
+  Only available if the application selects a libfabric API version >= 1.18.
   This option allows an application to change libfabric's behavior
   with respect to RDMA transfers.  Note that there is also an environment
   variable FI_EFA_USE_DEVICE_RDMA which the user may set as well.  If the
@@ -129,7 +132,8 @@ provider for AWS Neuron or Habana SynapseAI.
   revisions.
 
 *FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES - bool*
-: It is used to force the endpoint to use in-order send/recv operation for each 128 bytes
+: This option only applies to the fi_setopt() call.
+  It is used to force the endpoint to use in-order send/recv operation for each 128 bytes
   aligned block. Enabling the option will guarantee data inside each 128 bytes
   aligned block being sent and received in order, it will also guarantee data
   to be delivered to the receive buffer only once. If endpoint is not able to
@@ -137,11 +141,21 @@ provider for AWS Neuron or Habana SynapseAI.
 
 
 *FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES - bool*
-: It is used to set the endpoint to use in-order RDMA write operation for each 128 bytes
+: This option only applies to the fi_setopt() call.
+  It is used to set the endpoint to use in-order RDMA write operation for each 128 bytes
   aligned block. Enabling the option will guarantee data inside each 128 bytes
   aligned block being written in order, it will also guarantee data to be
   delivered to the target buffer only once. If endpoint is not able to support
   this feature, it will return -FI_EOPNOTSUPP for the call to fi_setopt().
+
+*FI_OPT_EFA_HOMOGENEOUS_PEERS - bool*
+: This option only applies to the fi_setopt() call for RDM endpoints on efa fabric. 
+  RDM endpoints on efa-direct fabric are unaffected by this option. 
+  When set to true, it indicates all peers are homogeneous, meaning they run on the 
+  same platform, use the same software versions, and share identical capabilities.
+  It accelerates the initial communication setup as interoperability between peers
+  is guaranteed. 
+  The default value is false.
 
 # PROVIDER SPECIFIC DOMAIN OPS
 The efa provider exports extensions for operations
@@ -337,6 +351,11 @@ for details.
 *FI_EFA_USE_UNSOLICITED_WRITE_RECV*
 : Use device's unsolicited write recv functionality when it's available. (Default: 1).
 Setting this environment variable to 0 can disable this feature.
+
+*FI_EFA_INTERNAL_RX_REFILL_THRESHOLD*
+: The threshold that EFA provider will refill the internal rx pkt pool. (Default: 8).
+When the number of internal rx pkts to post is lower than this threshold,
+the refill will be skipped.
 
 # SEE ALSO
 

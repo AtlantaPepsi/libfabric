@@ -7,6 +7,7 @@
 #include "efa_rdm_pke.h"
 #include "efa_rdm_protocol.h"
 #include "efa_rdm_pkt_type.h"
+#include "efa_rdm_pke_rtm.h"
 #include "efa_mr.h"
 
 /**
@@ -121,7 +122,7 @@ efa_rdm_pke_post_remote_read_or_nack(struct efa_rdm_ep  *ep,
 	p2p_avail = err;
 	if (p2p_avail) {
 		err = efa_rdm_ope_post_remote_read_or_queue(rxe);
-	} else if (efa_rdm_peer_support_read_nack(rxe->peer)) {
+	} else if (ep->homogeneous_peers || efa_rdm_peer_support_read_nack(rxe->peer)) {
 		EFA_INFO(FI_LOG_EP_CTRL,
 			 "Receiver sending long read "
 			 "NACK packet because P2P is not available, "
@@ -134,7 +135,7 @@ efa_rdm_pke_post_remote_read_or_nack(struct efa_rdm_ep  *ep,
 	}
 
 	if (err == -FI_ENOMR) {
-		if (efa_rdm_peer_support_read_nack(rxe->peer)) {
+		if (ep->homogeneous_peers || efa_rdm_peer_support_read_nack(rxe->peer)) {
 			EFA_INFO(FI_LOG_EP_CTRL, "Receiver sending long read "
 						 "NACK packet because memory "
 						 "registration limit was "
@@ -160,7 +161,7 @@ send_nack:
 	}
 
 	if (efa_rdm_pkt_type_is_rtm(pkt_type)) {
-		efa_rdm_rxe_map_insert(&ep->rxe_map, pkt_entry, rxe);
+		efa_rdm_rxe_map_insert(&ep->rxe_map, efa_rdm_pke_get_rtm_msg_id(pkt_entry), pkt_entry->addr, rxe);
 	}
 
 	return efa_rdm_ope_post_send_or_queue(rxe, EFA_RDM_READ_NACK_PKT);

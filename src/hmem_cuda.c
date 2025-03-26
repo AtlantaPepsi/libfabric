@@ -487,22 +487,17 @@ static int cuda_hmem_dl_init(void)
 		return -FI_ENOSYS;
 	}
 
-	cuda_attr.driver_handle = dlopen("libcuda.so", RTLD_NOW);
+	cuda_attr.driver_handle = dlopen("libcuda.so.1", RTLD_NOW);
 	if (!cuda_attr.driver_handle) {
 		FI_WARN(&core_prov, FI_LOG_CORE,
-			"Failed to dlopen libcuda.so\n");
+			"Failed to dlopen libcuda.so.1\n");
 		goto err_dlclose_cuda_runtime;
 	}
 
-	cuda_attr.nvml_handle = dlopen("libnvidia-ml.so", RTLD_NOW);
+	cuda_attr.nvml_handle = dlopen("libnvidia-ml.so.1", RTLD_NOW);
 	if (!cuda_attr.nvml_handle) {
-		FI_INFO(&core_prov, FI_LOG_CORE,
-			"Failed to dlopen libnvidia-ml.so.  Trying libnvidia-ml.so.1\n");
-		cuda_attr.nvml_handle = dlopen("libnvidia-ml.so.1", RTLD_NOW);
-		if (!cuda_attr.nvml_handle) {
-			FI_WARN(&core_prov, FI_LOG_CORE,
-			"Failed to dlopen libnvidia-ml.so or libnvidia-ml.so.1, bypassing nvml calls\n");
-		}
+		FI_WARN(&core_prov, FI_LOG_CORE,
+			"Failed to dlopen libnvidia-ml.so.1, bypassing nvml calls\n");
 	}
 
 	CUDA_DRIVER_FUNCS_DEF(CUDA_DRIVER_FUNCS_DLOPEN)
@@ -750,6 +745,16 @@ int cuda_get_dmabuf_fd(const void *addr, uint64_t size, int *fd,
 	return FI_SUCCESS;
 #else
 	return -FI_EOPNOTSUPP;
+#endif /* HAVE_CUDA_DMABUF */
+}
+
+int cuda_put_dmabuf_fd(int fd)
+{
+#if HAVE_CUDA_DMABUF
+	close(fd);
+	return FI_SUCCESS;
+#else
+	return -FI_ENOSYS;
 #endif /* HAVE_CUDA_DMABUF */
 }
 
@@ -1048,6 +1053,11 @@ bool cuda_is_dmabuf_supported(void)
 
 int cuda_get_dmabuf_fd(const void *addr, uint64_t size, int *fd,
 		       uint64_t *offset)
+{
+	return -FI_ENOSYS;
+}
+
+int cuda_put_dmabuf_fd(int fd)
 {
 	return -FI_ENOSYS;
 }

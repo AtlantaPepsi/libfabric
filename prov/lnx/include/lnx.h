@@ -33,7 +33,6 @@
 #ifndef LNX_H
 #define LNX_H
 
-#define LNX_DEF_AV_SIZE 1024
 #define LNX_MAX_LOCAL_EPS 16
 #define LNX_IOV_LIMIT 4
 
@@ -81,6 +80,7 @@ struct local_prov_ep {
 	struct fid_ep **lpe_txc;
 	struct fid_ep **lpe_rxc;
 	struct fid_av *lpe_av;
+	struct fid_ep *lpe_srx_ep;
 	struct lnx_peer_cq lpe_cq;
 	struct fi_info *lpe_fi_info;
 	struct fid_peer_srx lpe_srx;
@@ -179,6 +179,7 @@ struct lnx_peer_prov {
 struct lnx_peer {
 	/* true if peer can be reached over shared memory, false otherwise */
 	bool lp_local;
+	fi_addr_t lp_fi_addr;
 
 	/* Each provider that we can reach the peer on will have an entry
 	 * below. Each entry will contain all the local provider endpoints we
@@ -199,10 +200,9 @@ struct lnx_peer {
 struct lnx_peer_table {
 	struct util_av lpt_av;
 	int lpt_max_count;
-	int lpt_count;
 	struct lnx_domain *lpt_domain;
-	/* an array of peer entries */
-	struct lnx_peer **lpt_entries;
+	/* an array of peer entries of type struct lnx_peer */
+	struct ofi_bufpool *lpt_entries;
 };
 
 struct lnx_ctx {
@@ -292,6 +292,9 @@ int lnx_domain_open(struct fid_fabric *fabric, struct fi_info *info,
 int lnx_av_open(struct fid_domain *domain, struct fi_av_attr *attr,
 		struct fid_av **av, void *context);
 
+struct lnx_peer *
+lnx_av_lookup_addr(struct lnx_peer_table *peer_tbl, fi_addr_t addr);
+
 int lnx_cq_open(struct fid_domain *domain, struct fi_cq_attr *attr,
 		struct fid_cq **cq, void *context);
 
@@ -313,15 +316,6 @@ void lnx_free_entry(struct fi_peer_rx_entry *entry);
 void lnx_foreach_unspec_addr(struct fid_peer_srx *srx,
 	fi_addr_t (*get_addr)(struct fi_peer_rx_entry *));
 
-static inline struct lnx_peer *
-lnx_get_peer(struct lnx_peer **peers, fi_addr_t addr)
-{
-	if (!peers || addr == FI_ADDR_UNSPEC)
-		return NULL;
-
-	return peers[addr];
-}
-
 static inline
 void lnx_get_core_desc(struct lnx_mem_desc *desc, void **mem_desc)
 {
@@ -342,7 +336,7 @@ int lnx_create_mr(const struct iovec *iov, fi_addr_t addr,
 	struct fi_mr_attr attr = {};
 	struct fi_mr_attr cur_abi_attr;
 	struct ofi_mr_info info = {};
-	uint64_t flags;
+	uint64_t flags = 0;
 	int rc;
 
 	attr.iov_count = 1;

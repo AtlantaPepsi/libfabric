@@ -3,6 +3,7 @@ import pytest
 from efa.efa_common import has_gdrcopy, has_rdma
 
 
+# This test skips efa-direct because it does not have the read protocol
 # TODO Expand this test to run on all memory types (and rename)
 @pytest.mark.serial
 @pytest.mark.functional
@@ -50,7 +51,8 @@ def test_transfer_with_read_protocol_cuda(cmdline_args, fabtest_name, cntrl_env_
                                completion_semantic="transmit_complete",
                                memory_type="cuda_to_cuda",
                                message_size=message_size,
-                               warmup_iteration_type="0")
+                               warmup_iteration_type="0",
+                               fabric="efa")
 
     server_read_wrs_after_test = efa_retrieve_hw_counter_value(cmdline_args.server_id, "rdma_read_wrs")
     server_read_bytes_after_test = efa_retrieve_hw_counter_value(cmdline_args.server_id, "rdma_read_bytes")

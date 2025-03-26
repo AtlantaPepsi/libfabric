@@ -153,6 +153,8 @@ struct efa_rdm_ope {
 	struct efa_rdm_pke *unexp_pkt;
 	char *atomrsp_data;
 	enum efa_rdm_cuda_copy_method cuda_copy_method;
+	/* the rxe_map that the rxe is ever inserted */
+	struct efa_rdm_rxe_map *rxe_map;
 	/* end of RX related variables */
 	/* the following variables are for TX operation only */
 	uint64_t bytes_acked;
@@ -275,6 +277,17 @@ void efa_rdm_rxe_release_internal(struct efa_rdm_ope *rxe);
  * progressing the queued opes.
  */
 #define EFA_RDM_OPE_QUEUED_BEFORE_HANDSHAKE	BIT_ULL(14)
+
+/**
+ * @brief flag to indicate that the ope was created
+ * for internal operations, so it should not generate
+ * any cq entry or err entry.
+ * NOTICE: the ope->internal_flags is uint16_t, so
+ * to introduce more bits for internal flags, the
+ * internal_flags needs to be changed to uint32_t
+ * or larger.
+ */
+#define EFA_RDM_OPE_INTERNAL			BIT_ULL(15)
 
 #define EFA_RDM_OPE_QUEUED_FLAGS (EFA_RDM_OPE_QUEUED_RNR | EFA_RDM_OPE_QUEUED_CTRL | EFA_RDM_OPE_QUEUED_READ | EFA_RDM_OPE_QUEUED_BEFORE_HANDSHAKE)
 

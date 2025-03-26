@@ -53,8 +53,8 @@ static char **send_bufs, **recv_bufs;
 static struct fid_mr **send_mrs, **recv_mrs;
 static void **send_descs, **recv_descs;
 static struct fi_rma_iov *peer_iovs;
-static struct fi_context *recv_ctx;
-static struct fi_context *send_ctx;
+static struct fi_context2 *recv_ctx;
+static struct fi_context2 *send_ctx;
 static struct fid_cq **txcqs, **rxcqs;
 static struct fid_av **avs;
 static fi_addr_t *remote_fiaddr;
@@ -616,7 +616,7 @@ int main(int argc, char **argv)
 	if (!hints)
 		return EXIT_FAILURE;
 
-	while ((op = getopt_long(argc, argv, "c:vhAQ" ADDR_OPTS INFO_OPTS,
+	while ((op = getopt_long(argc, argv, "c:vhAQ" ADDR_OPTS INFO_OPTS CS_OPTS,
 				 long_opts, &lopt_idx)) != -1) {
 		switch (op) {
 		default:
@@ -624,6 +624,7 @@ int main(int argc, char **argv)
 				continue;
 			ft_parse_addr_opts(op, optarg, &opts);
 			ft_parseinfo(op, optarg, hints, &opts);
+			ft_parsecsopts(op, optarg, &opts);
 			break;
 		case 'c':
 			num_eps = atoi(optarg);
@@ -657,7 +658,7 @@ int main(int argc, char **argv)
 		opts.dst_addr = argv[optind];
 
 	hints->caps = FI_MSG | FI_RMA;
-	hints->mode = FI_CONTEXT;
+	hints->mode = FI_CONTEXT | FI_CONTEXT2;
 	hints->domain_attr->mr_mode = opts.mr_mode;
 	hints->addr_format = opts.address_format;
 

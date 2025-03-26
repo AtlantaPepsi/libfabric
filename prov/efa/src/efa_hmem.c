@@ -11,7 +11,7 @@ struct efa_hmem_info g_efa_hmem_info[OFI_HMEM_MAX];
 static size_t efa_max_eager_msg_size_with_largest_header() {
 	int mtu_size;
 
-	mtu_size = g_device_list[0].rdm_info->ep_attr->max_msg_size;
+	mtu_size = g_device_list[0].ibv_port_attr.max_msg_sz;
 
 	return mtu_size - efa_rdm_pkt_type_get_max_hdr_size();
 }
@@ -129,6 +129,7 @@ static inline void efa_hmem_info_check_p2p_support_cuda(struct efa_hmem_info *in
 	if (ret == FI_SUCCESS) {
 		ibv_mr = ibv_reg_dmabuf_mr(g_device_list[0].ibv_pd, dmabuf_offset,
 					   len, (uint64_t)ptr, dmabuf_fd, ibv_access);
+		(void)cuda_put_dmabuf_fd(dmabuf_fd);
 		if (!ibv_mr) {
 			EFA_INFO(FI_LOG_CORE,
 				"Unable to register CUDA device buffer via dmabuf: %s. "

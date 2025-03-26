@@ -143,9 +143,8 @@
 #define CXIP_MSG_ORDER			(FI_ORDER_SAS | \
 					 FI_ORDER_WAW | \
 					 FI_ORDER_RMA_WAW | \
+					 FI_ORDER_RMA_RAR | \
 					 FI_ORDER_ATOMIC_WAW | \
-					 FI_ORDER_ATOMIC_WAR | \
-					 FI_ORDER_ATOMIC_RAW | \
 					 FI_ORDER_ATOMIC_RAR)
 
 #define CXIP_EP_CQ_FLAGS \
@@ -177,12 +176,12 @@
 #define CXIP_MINOR_VERSION		1
 #define CXIP_PROV_VERSION		FI_VERSION(CXIP_MAJOR_VERSION, \
 						   CXIP_MINOR_VERSION)
-#define CXIP_FI_VERSION			FI_VERSION(2, 0)
+#define CXIP_FI_VERSION			FI_VERSION(2, 1)
 #define CXIP_WIRE_PROTO_VERSION		1
 
 #define	CXIP_COLL_MAX_CONCUR		8
 #define	CXIP_COLL_MIN_RX_BUFS		8
-#define	CXIP_COLL_MIN_RX_SIZE		4096
+#define	CXIP_COLL_MIN_RX_SIZE		131072
 #define	CXIP_COLL_MIN_MULTI_RECV	64
 #define	CXIP_COLL_MAX_DATA_SIZE		32
 #define	CXIP_COLL_MAX_SEQNO		((1 << 10) - 1)
@@ -192,7 +191,7 @@
 #define CXIP_COLL_MIN_RETRY_USEC	1
 #define CXIP_COLL_MAX_RETRY_USEC	32000
 #define CXIP_COLL_MIN_TIMEOUT_USEC	1
-#define CXIP_COLL_MAX_TIMEOUT_USEC	32000
+#define CXIP_COLL_MAX_TIMEOUT_USEC	20000000
 #define CXIP_COLL_MIN_FM_TIMEOUT_MSEC	1
 #define CXIP_COLL_DFL_FM_TIMEOUT_MSEC	100
 #define CXIP_COLL_MAX_FM_TIMEOUT_MSEC	1000000
@@ -244,6 +243,19 @@ enum cxip_rdzv_proto {
 };
 
 const char *cxip_rdzv_proto_to_str(enum cxip_rdzv_proto proto);
+
+enum cxip_mr_target_ordering {
+	/* Sets MR target ordering based on message and target RMA ordering
+	 * options.
+	 */
+	MR_ORDER_DEFAULT,
+
+	/* Force ordering to always be strict. */
+	MR_ORDER_STRICT,
+
+	/* Force ordering to always be relaxed. */
+	MR_ORDER_RELAXED,
+};
 
 struct cxip_environment {
 	/* Translation */
@@ -298,7 +310,6 @@ struct cxip_environment {
 	size_t ctrl_rx_eq_max_size;
 	char *device_name;
 	size_t cq_fill_percent;
-	int enable_unrestricted_end_ro;
 	int rget_tc;
 	int cacheline_size;
 
@@ -324,6 +335,8 @@ struct cxip_environment {
 	int hybrid_unexpected_msg_preemptive;
 	size_t mr_cache_events_disable_poll_nsecs;
 	size_t mr_cache_events_disable_le_poll_nsecs;
+	int force_dev_reg_copy;
+	enum cxip_mr_target_ordering mr_target_ordering;
 };
 
 extern struct cxip_environment cxip_env;
@@ -808,8 +821,10 @@ struct cxip_md {
 	struct cxi_md *md;
 	struct ofi_mr_info info;
 	uint64_t handle;
+	int dmabuf_fd;
 	bool handle_valid;
 	bool cached;
+	bool dmabuf_fd_valid;
 };
 
 #define CXIP_MR_DOMAIN_HT_BUCKETS 16
@@ -1063,7 +1078,7 @@ struct cxip_eq {
 };
 
 #define CXIP_EQ_MAP_FLAGS \
-	(CXI_MAP_WRITE | CXI_MAP_PIN | CXI_MAP_IOVA_ALLOC)
+	(CXI_MAP_WRITE | CXI_MAP_PIN)
 
 /*
  * RMA request
@@ -1407,8 +1422,8 @@ struct cxip_cq {
 	 */
 	struct ofi_genlock ep_list_lock;
 
-	/* Internal CXI wait object allocated only if required. */
-	struct cxil_wait_obj *priv_wait;
+	/* CXI CQ wait object EPs are maintained in epoll FD */
+	int ep_fd;
 
 	/* CXI specific fields. */
 	struct cxip_domain *domain;
@@ -1963,13 +1978,16 @@ struct cxip_rxc_rnr {
 };
 
 static inline void cxip_copy_to_md(struct cxip_md *md, void *dest,
-				   const void *src, size_t size)
+				   const void *src, size_t size,
+				   bool require_dev_reg_copy)
 {
 	ssize_t ret __attribute__((unused));
 	struct iovec iov;
+	bool dev_reg_copy = require_dev_reg_copy ||
+		(md->handle_valid && size <= cxip_env.safe_devmem_copy_threshold);
 
-	/* Favor CPU store access instead of relying on HMEM copy functions. */
-	if (md->handle_valid && size <= cxip_env.safe_devmem_copy_threshold) {
+	/* Favor dev reg access instead of relying on HMEM copy functions. */
+	if (dev_reg_copy) {
 		ret = ofi_hmem_dev_reg_copy_to_hmem(md->info.iface, md->handle,
 						    dest, src, size);
 		assert(ret == FI_SUCCESS);
@@ -1985,13 +2003,16 @@ static inline void cxip_copy_to_md(struct cxip_md *md, void *dest,
 }
 
 static inline void cxip_copy_from_md(struct cxip_md *md, void *dest,
-				     const void *src, size_t size)
+				     const void *src, size_t size,
+				     bool require_dev_reg_copy)
 {
 	ssize_t ret __attribute__((unused));
 	struct iovec iov;
+	bool dev_reg_copy = require_dev_reg_copy ||
+		(md->handle_valid && size <= cxip_env.safe_devmem_copy_threshold);
 
-	/* Favor CPU store access instead of relying on HMEM copy functions. */
-	if (md->handle_valid && size <= cxip_env.safe_devmem_copy_threshold) {
+	/* Favor dev reg access instead of relying on HMEM copy functions. */
+	if (dev_reg_copy) {
 		ret = ofi_hmem_dev_reg_copy_from_hmem(md->info.iface,
 						      md->handle,
 						      dest, src, size);
@@ -2409,6 +2430,10 @@ struct cxip_ep_obj {
 	struct cxip_txc *txc;
 	struct cxip_rxc *rxc;
 
+	/* Internal support for CQ wait object */
+	struct cxil_wait_obj *priv_wait;
+	int wait_fd;
+
 	/* ASIC version associated with EP/Domain */
 	enum cassini_version asic_ver;
 
@@ -2438,6 +2463,9 @@ struct cxip_ep_obj {
 	struct fi_tx_attr tx_attr;
 	struct fi_rx_attr rx_attr;
 
+	/* Require memcpy's via the dev reg APIs. */
+	bool require_dev_reg_copy[OFI_HMEM_MAX];
+
 	/* Collectives support */
 	struct cxip_ep_coll_obj coll;
 	struct cxip_ep_zbcoll_obj zbcoll;
@@ -2447,6 +2475,44 @@ struct cxip_ep_obj {
 	ofi_atomic32_t ref;
 	struct cxip_portals_table *ptable;
 };
+
+int cxip_ep_obj_map(struct cxip_ep_obj *ep, const void *buf, unsigned long len,
+		    uint64_t flags, struct cxip_md **md);
+
+static inline void
+cxip_ep_obj_copy_to_md(struct cxip_ep_obj *ep, struct cxip_md *md, void *dest,
+		       const void *src, size_t size)
+{
+	cxip_copy_to_md(md, dest, src, size,
+			ep->require_dev_reg_copy[md->info.iface]);
+}
+
+static inline void
+cxip_ep_obj_copy_from_md(struct cxip_ep_obj *ep, struct cxip_md *md, void *dest,
+			 const void *src, size_t size)
+{
+	cxip_copy_from_md(md, dest, src, size,
+			  ep->require_dev_reg_copy[md->info.iface]);
+}
+
+static inline bool cxip_ep_obj_mr_relaxed_order(struct cxip_ep_obj *ep)
+{
+	if (cxip_env.mr_target_ordering ==  MR_ORDER_STRICT)
+		return false;
+
+	if (cxip_env.mr_target_ordering ==  MR_ORDER_RELAXED)
+		return true;
+
+	if ((ep->rx_attr.msg_order & FI_ORDER_RMA_WAW) &&
+	     ep->ep_attr.max_order_waw_size != 0)
+		return false;
+
+	if ((ep->rx_attr.msg_order & FI_ORDER_WAW) &&
+	    ep->ep_attr.max_order_waw_size != 0)
+		return false;
+
+	return true;
+}
 
 static inline void cxip_txc_otx_reqs_inc(struct cxip_txc *txc)
 {
@@ -2897,6 +2963,9 @@ struct cxip_coll_mc {
 	int next_red_id;			// next available red_id
 	int max_red_id;				// limit total concurrency
 	int seqno;				// rolling seqno for packets
+	int close_state;			// the state of the close operation
+	bool has_closed;			// true after a mc close call
+	bool has_error;				// true if any error
 	bool is_multicast;			// true if multicast address
 	bool arm_disable;			// arm-disable for testing
 	bool retry_disable;			// retry-disable for testing
@@ -3085,7 +3154,8 @@ static inline bool cxip_cmdq_match(struct cxip_cmdq *cmdq, uint16_t vni,
 }
 
 int cxip_evtq_init(struct cxip_evtq *evtq, struct cxip_cq *cq,
-		   size_t num_events, size_t num_fc_events);
+		   size_t num_events, size_t num_fc_events,
+		   struct cxil_wait_obj *priv_wait);
 void cxip_evtq_fini(struct cxip_evtq *eq);
 
 int cxip_domain(struct fid_fabric *fabric, struct fi_info *info,
@@ -3165,6 +3235,9 @@ int cxip_cq_req_complete_addr(struct cxip_req *req, fi_addr_t src);
 int cxip_cq_req_error(struct cxip_req *req, size_t olen,
 		      int err, int prov_errno, void *err_data,
 		      size_t err_data_size, fi_addr_t src_addr);
+int cxip_cq_add_wait_fd(struct cxip_cq *cq, int wait_fd, int events);
+void cxip_cq_del_wait_fd(struct cxip_cq *cq, int wait_fd);
+
 int proverr2errno(int err);
 struct cxip_req *cxip_evtq_req_alloc(struct cxip_evtq *evtq,
 				     int remap, void *req_ctx);
@@ -3172,9 +3245,9 @@ void cxip_evtq_req_free(struct cxip_req *req);
 void cxip_evtq_progress(struct cxip_evtq *evtq);
 
 void cxip_ep_progress(struct fid *fid);
-int cxip_ep_peek(struct fid *fid);
 void cxip_ep_flush_trig_reqs(struct cxip_ep_obj *ep_obj);
 
+int cxip_cq_trywait(struct cxip_cq *cq);
 void cxip_cq_progress(struct cxip_cq *cq);
 void cxip_util_cq_progress(struct util_cq *util_cq);
 int cxip_cq_open(struct fid_domain *domain, struct fi_cq_attr *attr,
@@ -3203,8 +3276,7 @@ void cxip_ep_tgt_ctrl_progress(struct cxip_ep_obj *ep_obj);
 void cxip_ep_tgt_ctrl_progress_locked(struct cxip_ep_obj *ep_obj);
 int cxip_ep_ctrl_init(struct cxip_ep_obj *ep_obj);
 void cxip_ep_ctrl_fini(struct cxip_ep_obj *ep_obj);
-void cxip_ep_ctrl_del_wait(struct cxip_ep_obj *ep_obj);
-int cxip_ep_ctrl_trywait(void *arg);
+int cxip_ep_trywait(struct cxip_ep_obj *ep_obj, struct cxip_cq *cq);
 
 int cxip_av_set(struct fid_av *av, struct fi_av_set_attr *attr,
 	        struct fid_av_set **av_set_fid, void * context);
@@ -3641,17 +3713,19 @@ cxip_txc_copy_from_hmem(struct cxip_txc *txc, struct cxip_md *hmem_md,
 	 */
 	if (!cxip_env.fork_safe_requested) {
 		if (!hmem_md) {
-			ret = cxip_map(domain, hmem_src, size, 0, &hmem_md);
+			ret = cxip_ep_obj_map(txc->ep_obj, hmem_src, size, 0,
+					      &hmem_md);
 			if (ret) {
-				TXC_WARN(txc, "cxip_map failed: %d:%s\n", ret,
-					 fi_strerror(-ret));
+				TXC_WARN(txc, "cxip_ep_obj_map failed: %d:%s\n",
+					 ret, fi_strerror(-ret));
 				return ret;
 			}
 
 			unmap_hmem_md = true;
 		}
 
-		cxip_copy_from_md(hmem_md, dest, hmem_src, size);
+		cxip_ep_obj_copy_from_md(txc->ep_obj, hmem_md, dest, hmem_src,
+					 size);
 		if (unmap_hmem_md)
 			cxip_unmap(hmem_md);
 

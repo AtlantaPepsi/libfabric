@@ -320,7 +320,7 @@ struct ofi_filter {
 
 extern struct ofi_filter prov_log_filter;
 extern struct fi_provider core_prov;
-extern const char *log_prefix;
+extern OFI_THREAD_LOCAL const char *log_prefix;
 
 void ofi_create_filter(struct ofi_filter *filter, const char *env_name);
 void ofi_free_filter(struct ofi_filter *filter);
@@ -361,9 +361,13 @@ struct ipc_info {
 
 static inline uint64_t roundup_power_of_two(uint64_t n)
 {
+#if defined(__GNUC__)
+	if (n < 2)
+		return n;
+	return 2ULL << (63 - __builtin_clzll(n - 1));
+#else
 	if (!n || !(n & (n - 1)))
 		return n;
-	n--;
 	n |= n >> 1;
 	n |= n >> 2;
 	n |= n >> 4;
@@ -372,6 +376,7 @@ static inline uint64_t roundup_power_of_two(uint64_t n)
 	n |= n >> 32;
 	n++;
 	return n;
+#endif
 }
 
 static inline uint64_t rounddown_power_of_two(uint64_t n)

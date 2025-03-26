@@ -5,6 +5,7 @@ import pytest
 
 
 # this test must be run in serial mode because it check hw counter
+# efa-direct does not have runt read so skip this test
 @pytest.mark.serial
 @pytest.mark.functional
 @pytest.mark.parametrize("memory_type,copy_method", [
@@ -45,7 +46,8 @@ def test_runt_read_functional(cmdline_args, memory_type, copy_method):
                                completion_semantic="transmit_complete",
                                memory_type=memory_type,
                                message_size="262144",
-                               warmup_iteration_type="0")
+                               warmup_iteration_type="0",
+                               fabric="efa")
 
     server_read_wrs_after_test = efa_retrieve_hw_counter_value(cmdline_args.server_id, "rdma_read_wrs")
     server_read_bytes_after_test =efa_retrieve_hw_counter_value(cmdline_args.server_id, "rdma_read_bytes")

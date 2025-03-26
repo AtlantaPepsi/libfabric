@@ -68,7 +68,7 @@ def num_cuda_devices(ip):
 @functools.lru_cache(10)
 @retry(retry_on_exception=is_ssh_connection_error, stop_max_attempt_number=3, wait_fixed=5000)
 def num_neuron_devices(ip):
-    proc = run("ssh {} neuron-ls -j".format(ip), shell=True,
+    proc = run("ssh {} /opt/aws/neuron/bin/neuron-ls -j".format(ip), shell=True,
                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                timeout=60, encoding="utf-8")
 
@@ -84,7 +84,7 @@ def num_neuron_devices(ip):
 @functools.lru_cache(10)
 @retry(retry_on_exception=is_ssh_connection_error, stop_max_attempt_number=3, wait_fixed=5000)
 def num_neuron_cores_on_device(ip, device_id):
-    proc = run("ssh {} neuron-ls -j".format(ip), shell=True,
+    proc = run("ssh {} /opt/aws/neuron/bin/neuron-ls -j".format(ip), shell=True,
                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                timeout=60, encoding="utf-8")
 
@@ -97,7 +97,7 @@ def num_neuron_cores_on_device(ip, device_id):
 
 @retry(retry_on_exception=is_ssh_connection_error, stop_max_attempt_number=3, wait_fixed=5000)
 def is_neuron_device_available(ip, device_id):
-    proc = run("ssh {} neuron-ls -j".format(ip), shell=True,
+    proc = run("ssh {} /opt/aws/neuron/bin/neuron-ls -j".format(ip), shell=True,
                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                timeout=60, encoding="utf-8")
 
@@ -342,7 +342,8 @@ class ClientServerTest:
                  memory_type="host_to_host",
                  timeout=None,
                  warmup_iteration_type=None,
-                 completion_type="queue"):
+                 completion_type="queue",
+                 fabric=None):
 
         self._cmdline_args = cmdline_args
         self._timeout = timeout or cmdline_args.timeout
@@ -350,12 +351,12 @@ class ClientServerTest:
                                                               completion_semantic, prefix_type,
                                                               datacheck_type, message_size,
                                                               memory_type, warmup_iteration_type,
-                                                              completion_type)
+                                                              completion_type, fabric)
         self._client_base_command, client_additonal_environment = self.prepare_base_command("client", executable, iteration_type,
                                                               completion_semantic, prefix_type,
                                                               datacheck_type, message_size,
                                                               memory_type, warmup_iteration_type,
-                                                              completion_type)
+                                                              completion_type, fabric)
 
 
         self._server_command = self._cmdline_args.populate_command(self._server_base_command, "server", self._timeout, server_additonal_environment)
@@ -369,7 +370,8 @@ class ClientServerTest:
                              message_size=None,
                              memory_type="host_to_host",
                              warmup_iteration_type=None,
-                             completion_type="queue"):
+                             completion_type="queue",
+                             fabric=None):
         if executable == "fi_ubertest":
             return "fi_ubertest", None
 
@@ -381,6 +383,7 @@ class ClientServerTest:
                 -v: data verification (no data verification if not specified)
                 -S: message size
                 -w: number of warmup iterations
+                -f: fabric name to test
             this function will construct a command with these options
         '''
 
@@ -403,6 +406,9 @@ class ClientServerTest:
             command += " -U"
         else:
             assert completion_semantic == "transmit_complete"
+
+        if fabric:
+            command += f" -f {fabric}"
 
         # Most fabtests actually run as -t queue by default.
         # However, not all fabtests binaries support -t option.
@@ -455,19 +461,26 @@ class ClientServerTest:
         if "PYTEST_XDIST_WORKER" in os.environ:
             worker_id = int(os.environ["PYTEST_XDIST_WORKER"].replace("gw", ""))
             hmem_device_id = worker_id % num_hmem
-            if host_memory_type == "cuda":
-                command += " -i {}".format(hmem_device_id)
-            else:
-                assert host_memory_type == "neuron"
-                num_cores = num_neuron_cores_on_device(host_ip, hmem_device_id)
+        else:
+            hmem_device_id = 0
+
+        if host_memory_type == "cuda":
+            command += " -i {}".format(hmem_device_id)
+        else:
+            assert host_memory_type == "neuron"
+            num_cores = num_neuron_cores_on_device(host_ip, hmem_device_id)
+            if command_type == "server":
                 additional_environment = "NEURON_RT_VISIBLE_CORES={}".format(
                     hmem_device_id * num_cores)
-                wait_until_neuron_device_available(host_ip, hmem_device_id)
+            else:
+                additional_environment = "NEURON_RT_VISIBLE_CORES={}".format(
+                    hmem_device_id * num_cores + 1)
+            wait_until_neuron_device_available(host_ip, hmem_device_id)
 
-            if self._cmdline_args.provider == "efa":
-                import efa.efa_common
-                efa_device = efa.efa_common.get_efa_device_name_for_cuda_device(host_ip, hmem_device_id, num_hmem)
-                command += " -d {}-rdm".format(efa_device)
+        if self._cmdline_args.provider == "efa":
+            import efa.efa_common
+            efa_device = efa.efa_common.get_efa_device_name_for_cuda_device(host_ip, hmem_device_id, num_hmem)
+            command += " -d {}-rdm".format(efa_device)
 
         return command, additional_environment
 

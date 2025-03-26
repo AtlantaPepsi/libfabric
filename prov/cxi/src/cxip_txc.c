@@ -63,8 +63,8 @@ int cxip_ibuf_chunk_init(struct ofi_bufpool_region *region)
 	struct cxip_md *md;
 	int ret;
 
-	ret = cxip_map(txc->domain, region->mem_region,
-		       region->pool->region_size, OFI_MR_NOCACHE, &md);
+	ret = cxip_ep_obj_map(txc->ep_obj, region->mem_region,
+			      region->pool->region_size, OFI_MR_NOCACHE, &md);
 	if (ret != FI_SUCCESS) {
 		CXIP_WARN("Failed to map inject buffer chunk\n");
 		return ret;
@@ -328,7 +328,8 @@ int cxip_txc_enable(struct cxip_txc *txc)
 
 	num_events = cxip_txc_get_num_events(txc);
 
-	ret = cxip_evtq_init(&txc->tx_evtq, txc->send_cq, num_events, 0);
+	ret = cxip_evtq_init(&txc->tx_evtq, txc->send_cq, num_events, 0,
+			     txc->ep_obj->priv_wait);
 	if (ret) {
 		CXIP_WARN("Failed to initialize TX event queue: %d, %s\n",
 			  ret, fi_strerror(-ret));

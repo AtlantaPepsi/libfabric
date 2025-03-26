@@ -72,7 +72,11 @@ uint32_t efa_mock_ibv_read_qp_num_return_mock(struct ibv_cq_ex *current);
 
 uint32_t efa_mock_ibv_read_wc_flags_return_mock(struct ibv_cq_ex *current);
 
+uint32_t efa_mock_ibv_wc_read_imm_data_return_mock(struct ibv_cq_ex *current);
+
 bool efa_mock_efadv_wc_is_unsolicited(struct efadv_cq *efadv_cq);
+
+void efa_mock_ibv_wr_send_imm_save_wr(struct ibv_qp_ex *qp, __be32 imm_data);
 
 ssize_t __real_ofi_copy_from_hmem_iov(void *dest, size_t size,
 				      enum fi_hmem_iface hmem_iface, uint64_t device,
@@ -91,7 +95,25 @@ bool __real_efa_device_support_unsolicited_write_recv();
 
 int efa_mock_efa_rdm_pke_read_return_mock(struct efa_rdm_ope *ope);
 
+ssize_t __real_efa_rdm_pke_proc_matched_rtm(struct efa_rdm_pke *pkt_entry);
+
+ssize_t efa_mock_efa_rdm_pke_proc_matched_rtm_no_op(struct efa_rdm_pke *pkt_entry);
+
+ssize_t __real_efa_rdm_ope_post_send(struct efa_rdm_ope *ope, int pkt_type);
+
+ssize_t efa_mock_efa_rdm_ope_post_send_return_mock(struct efa_rdm_ope *ope, int pkt_type);
+
 bool efa_mock_efa_device_support_unsolicited_write_recv(void);
+
+int efa_mock_ibv_post_recv(struct ibv_qp *qp, struct ibv_recv_wr *wr,
+			   struct ibv_recv_wr **bad_wr);
+
+void efa_mock_ibv_wr_rdma_read_save_wr(struct ibv_qp_ex *qp, uint32_t rkey,
+				       uint64_t remote_addr);
+
+void efa_mock_ibv_wr_rdma_write_imm_save_wr(struct ibv_qp_ex *qp, uint32_t rkey,
+					    uint64_t remote_addr,
+					    __be32 imm_data);
 
 struct efa_unit_test_mocks
 {
@@ -123,6 +145,10 @@ struct efa_unit_test_mocks
 					  size_t hmem_iov_count, uint64_t hmem_iov_offset);
 
 	int (*efa_rdm_pke_read)(struct efa_rdm_ope *ope);
+
+	ssize_t (*efa_rdm_pke_proc_matched_rtm)(struct efa_rdm_pke *pkt_entry);
+
+	ssize_t (*efa_rdm_ope_post_send)(struct efa_rdm_ope *ope, int pkt_type);
 
 	bool (*efa_device_support_unsolicited_write_recv)(void);
 

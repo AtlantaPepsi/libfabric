@@ -73,7 +73,7 @@ struct fid_eq *eq;
 struct fid_mc *mc;
 
 struct fid_mr no_mr;
-struct fi_context tx_ctx, rx_ctx;
+struct fi_context2 tx_ctx, rx_ctx;
 struct ft_context *tx_ctx_arr = NULL, *rx_ctx_arr = NULL;
 uint64_t remote_cq_data = 0;
 
@@ -540,6 +540,7 @@ static void ft_set_tx_rx_sizes(size_t *set_tx, size_t *set_rx)
 {
 	*set_tx = opts.options & FT_OPT_SIZE ?
 		  opts.transfer_size : test_size[TEST_CNT - 1].size;
+	*set_tx = MAX(*set_tx, FT_MAX_CTRL_MSG);
 	if (*set_tx > fi->ep_attr->max_msg_size)
 		*set_tx = fi->ep_attr->max_msg_size;
 	*set_rx = *set_tx + ft_rx_prefix_size();
@@ -600,8 +601,8 @@ int ft_alloc_msgs(void)
 		ft_set_tx_rx_sizes(&tx_size, &rx_size);
 		tx_mr_size = 0;
 		rx_mr_size = 0;
-		rx_buf_size = MAX(rx_size, FT_MAX_CTRL_MSG) * opts.window_size;
-		tx_buf_size = MAX(tx_size, FT_MAX_CTRL_MSG) * opts.window_size;
+		rx_buf_size = rx_size * opts.window_size;
+		tx_buf_size = tx_size * opts.window_size;
 	}
 
 	/* Allow enough space for RMA to operate in a distinct memory
@@ -1463,7 +1464,8 @@ int ft_enable_ep(struct fid_ep *bind_ep, struct fid_eq *bind_eq, struct fid_av *
 	}
 
 	if (opts.max_msg_size) {
-		ret = fi_setopt(&bind_ep->fid, FI_OPT_ENDPOINT, FI_OPT_MAX_MSG_SIZE, &opts.max_msg_size, sizeof opts.max_msg_size);
+		ret = fi_setopt(&bind_ep->fid, FI_OPT_ENDPOINT, FI_OPT_MAX_MSG_SIZE,
+				&opts.max_msg_size, sizeof opts.max_msg_size);
 		if (ret && ret != -FI_EOPNOTSUPP) {
 			FT_PRINTERR("fi_setopt(FI_OPT_MAX_MSG_SIZE)", ret);
 			return ret;
@@ -1481,6 +1483,15 @@ int ft_enable_ep(struct fid_ep *bind_ep, struct fid_eq *bind_eq, struct fid_av *
 				&opts.inject_size, sizeof opts.inject_size);
 		if (ret && ret != -FI_EOPNOTSUPP) {
 			FT_PRINTERR("fi_setopt(FI_OPT_INJECT_RMA_SIZE)", ret);
+			return ret;
+		}
+	}
+
+	if (opts.min_multi_recv_size) {
+		ret = fi_setopt(&bind_ep->fid, FI_OPT_ENDPOINT, FI_OPT_MIN_MULTI_RECV,
+				&opts.min_multi_recv_size, sizeof opts.min_multi_recv_size);
+		if (ret && ret != -FI_EOPNOTSUPP) {
+			FT_PRINTERR("fi_setopt(FI_OPT_MIN_MULTI_RECV_SIZE)", ret);
 			return ret;
 		}
 	}
@@ -2913,7 +2924,7 @@ int ft_tx_msg(struct fid_ep *ep, fi_addr_t fi_addr, void *buf, size_t size, void
 }
 
 int ft_sendmsg(struct fid_ep *ep, fi_addr_t fi_addr,
-		void *buf, size_t size, void *ctx, int flags)
+		void *buf, size_t size, void *ctx, uint64_t flags)
 {
 	struct fi_msg msg;
 	struct fi_msg_tagged tagged_msg;
@@ -2952,14 +2963,14 @@ int ft_sendmsg(struct fid_ep *ep, fi_addr_t fi_addr,
 }
 
 
-int ft_recvmsg(struct fid_ep *ep, fi_addr_t fi_addr,
-	       size_t size, void *ctx, int flags)
+int ft_recvmsg(struct fid_ep *ep, fi_addr_t fi_addr, void *buf,
+	       size_t size, void *ctx, uint64_t flags)
 {
 	struct fi_msg msg;
 	struct fi_msg_tagged tagged_msg;
 	struct iovec msg_iov;
 
-	msg_iov.iov_base = rx_buf;
+	msg_iov.iov_base = (char *) buf;
 	msg_iov.iov_len = size;
 
 	if (hints->caps & FI_TAGGED) {
@@ -2969,7 +2980,7 @@ int ft_recvmsg(struct fid_ep *ep, fi_addr_t fi_addr,
 		tagged_msg.addr = fi_addr;
 		tagged_msg.data = NO_CQ_DATA;
 		tagged_msg.context = ctx;
-		tagged_msg.tag = ft_tag ? ft_tag : tx_seq;
+		tagged_msg.tag = ft_tag ? ft_tag : rx_seq;
 		tagged_msg.ignore = 0;
 
 		FT_POST(fi_trecvmsg, ft_progress, rxcq, rx_seq,
@@ -3221,7 +3232,7 @@ int ft_wait_child(void)
 int ft_finalize_ep(struct fid_ep *ep)
 {
 	int ret;
-	struct fi_context ctx;
+	struct fi_context2 ctx;
 
 	ret = ft_sendmsg(ep, remote_fi_addr, tx_buf, 4, &ctx, FI_TRANSMIT_COMPLETE);
 	if (ret)

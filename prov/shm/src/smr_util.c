@@ -558,10 +558,11 @@ int smr_map_add(const struct fi_provider *prov, struct smr_map *map,
 		const char *name, int64_t *id)
 {
 	struct ofi_rbnode *node;
+	const char *shm_name = smr_no_prefix(name);
 	int tries = 0, ret = 0;
 
 	ofi_spin_lock(&map->lock);
-	ret = ofi_rbmap_insert(&map->rbmap, (void *) name,
+	ret = ofi_rbmap_insert(&map->rbmap, (void *) shm_name,
 			       (void *) (intptr_t) *id, &node);
 	if (ret) {
 		assert(ret == -FI_EALREADY);
@@ -580,7 +581,7 @@ int smr_map_add(const struct fi_provider *prov, struct smr_map *map,
 	if (++map->cur_id == SMR_MAX_PEERS)
 		map->cur_id = 0;
 	node->data = (void *) (intptr_t) *id;
-	strncpy(map->peers[*id].peer.name, name, SMR_NAME_MAX);
+	strncpy(map->peers[*id].peer.name, shm_name, SMR_NAME_MAX);
 	map->peers[*id].peer.name[SMR_NAME_MAX - 1] = '\0';
 	map->peers[*id].region = NULL;
 	map->num_peers++;
@@ -599,7 +600,7 @@ void smr_map_del(struct smr_map *map, int64_t id)
 	assert(id >= 0 && id < SMR_MAX_PEERS);
 	pthread_mutex_lock(&ep_list_lock);
 	dlist_foreach_container(&ep_name_list, struct smr_ep_name, name, entry) {
-		if (strcmp(name->name, map->peers[id].peer.name)) {
+		if (!strcmp(name->name, map->peers[id].peer.name)) {
 			local = true;
 			break;
 		}
