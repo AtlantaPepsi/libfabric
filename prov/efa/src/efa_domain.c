@@ -76,23 +76,28 @@ static int efa_domain_init_device_and_pd(struct efa_domain *efa_domain,
 	if (!domain_name)
 		return -FI_EINVAL;
 
-	for (i = 0; i < g_device_cnt; i++) {
-		device_name = g_device_list[i].ibv_ctx->device->name;
+	for (i = 0; i < g_efa_selected_device_cnt; i++) {
+		device_name = g_efa_selected_device_list[i].ibv_ctx->device->name;
 		if (strstr(domain_name, device_name) == domain_name &&
 		    strlen(domain_name) - strlen(device_name) ==
 		            strlen(domain_name_suffix) &&
 		    strcmp((const char *) (domain_name + strlen(device_name)),
 		           domain_name_suffix) == 0) {
-			efa_domain->device = &g_device_list[i];
+			efa_domain->device = &g_efa_selected_device_list[i];
 			break;
 		}
 	}
 
-	if (i == g_device_cnt)
+	if (i == g_efa_selected_device_cnt)
 		return -FI_ENODEV;
 
+	efa_domain->ibv_pd = ibv_alloc_pd(efa_domain->device->ibv_ctx);
+	if (!efa_domain->ibv_pd) {
+		EFA_WARN(FI_LOG_DOMAIN, "Failed to allocated ibv_pd: %d\n", errno);
+		return -FI_ENOMEM;
+	}
+
 	EFA_INFO(FI_LOG_DOMAIN, "Domain %s selected device %s\n", domain_name, device_name);
-	efa_domain->ibv_pd = efa_domain->device->ibv_pd;
 	return 0;
 }
 
@@ -184,6 +189,7 @@ int efa_domain_open(struct fid_fabric *fabric_fid, struct fi_info *info,
 {
 	struct efa_domain *efa_domain;
 	int ret = 0, err;
+	bool use_lock;
 
 	efa_domain = calloc(1, sizeof(struct efa_domain));
 	if (!efa_domain)
@@ -203,8 +209,10 @@ int efa_domain_open(struct fid_fabric *fabric_fid, struct fi_info *info,
 	efa_domain->ibv_mr_reg_ct = 0;
 	efa_domain->ibv_mr_reg_sz = 0;
 
-	err = ofi_genlock_init(&efa_domain->srx_lock, efa_domain->util_domain.threading != FI_THREAD_SAFE ?
-			       OFI_LOCK_NOOP : OFI_LOCK_MUTEX);
+	efa_domain->ah_map = NULL;
+
+	use_lock = ofi_thread_level(efa_domain->util_domain.threading) <= ofi_thread_level(FI_THREAD_COMPLETION);
+	err = ofi_genlock_init(&efa_domain->srx_lock, use_lock ? OFI_LOCK_MUTEX : OFI_LOCK_NOOP);
 	if (err) {
 		EFA_WARN(FI_LOG_DOMAIN, "srx lock init failed! err: %d\n", err);
 		ret = err;
@@ -308,7 +316,10 @@ int efa_domain_open(struct fid_fabric *fabric_fid, struct fi_info *info,
 	}
 #endif
 
+	ofi_mutex_lock(&g_efa_domain_list_lock);
 	dlist_insert_tail(&efa_domain->list_entry, &g_efa_domain_list);
+	ofi_mutex_unlock(&g_efa_domain_list_lock);
+
 	return 0;
 
 err_free:
@@ -329,12 +340,15 @@ err_free:
 static int efa_domain_close(fid_t fid)
 {
 	struct efa_domain *efa_domain;
+	struct efa_ah *ah_entry, *tmp;
 	int ret;
 
 	efa_domain = container_of(fid, struct efa_domain,
 				  util_domain.domain_fid.fid);
 
+	ofi_mutex_lock(&g_efa_domain_list_lock);
 	dlist_remove(&efa_domain->list_entry);
+	ofi_mutex_unlock(&g_efa_domain_list_lock);
 
 	if (efa_domain->cache) {
 		ofi_mr_cache_cleanup(efa_domain->cache);
@@ -342,7 +356,24 @@ static int efa_domain_close(fid_t fid)
 		efa_domain->cache = NULL;
 	}
 
+	/* Clean up ah_map if any entries remain */
+	ofi_genlock_lock(&efa_domain->util_domain.lock);
+	if (efa_domain->ah_map) {
+		EFA_WARN(FI_LOG_DOMAIN, "AH map not empty during domain close! Cleaning up ...\n");
+		HASH_ITER(hh, efa_domain->ah_map, ah_entry, tmp) {
+			ret = ibv_destroy_ah(ah_entry->ibv_ah);
+			if (ret)
+				EFA_WARN(FI_LOG_DOMAIN, "ibv_destroy_ah failed during cleanup! err=%d\n", ret);
+			HASH_DEL(efa_domain->ah_map, ah_entry);
+			free(ah_entry);
+		}
+	}
+	ofi_genlock_unlock(&efa_domain->util_domain.lock);
+
 	if (efa_domain->ibv_pd) {
+		ret = ibv_dealloc_pd(efa_domain->ibv_pd);
+		if (ret)
+			EFA_WARN(FI_LOG_DOMAIN, "Failed to dealloc ibv_pd: %d\n", ret);
 		efa_domain->ibv_pd = NULL;
 	}
 

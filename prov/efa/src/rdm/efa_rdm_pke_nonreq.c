@@ -72,7 +72,7 @@ ssize_t efa_rdm_pke_init_handshake(struct efa_rdm_pke *pkt_entry,
 	 * devices. I.e. the PCI bus will only contain EFA devices with the same
 	 * vendor_part_id (0xEFA0, 0xEFA1, etc)
 	 */
-	device_version_hdr->device_version = g_device_list[0].ibv_attr.vendor_part_id;
+	device_version_hdr->device_version = g_efa_selected_device_list[0].ibv_attr.vendor_part_id;
 	handshake_hdr->flags |= EFA_RDM_HANDSHAKE_DEVICE_VERSION_HDR;
 	pkt_entry->pkt_size += sizeof (struct efa_rdm_handshake_opt_device_version_hdr);
 
@@ -203,8 +203,8 @@ void efa_rdm_pke_handle_cts_recv(struct efa_rdm_pke *pkt_entry)
 
 	efa_rdm_pke_release_rx(pkt_entry);
 
-	if (ope->state != EFA_RDM_TXE_SEND) {
-		ope->state = EFA_RDM_TXE_SEND;
+	if (ope->state != EFA_RDM_OPE_SEND) {
+		ope->state = EFA_RDM_OPE_SEND;
 		dlist_insert_tail(&ope->entry, &efa_rdm_ep_domain(ep)->ope_longcts_send_list);
 	}
 }
@@ -408,7 +408,7 @@ void efa_rdm_pke_handle_readrsp_sent(struct efa_rdm_pke *pkt_entry)
 		if (efa_is_cache_available(efa_rdm_ep_domain(pkt_entry->ep)))
 			efa_rdm_ope_try_fill_desc(rxe, 0, FI_SEND);
 
-		rxe->state = EFA_RDM_TXE_SEND;
+		rxe->state = EFA_RDM_OPE_SEND;
 		dlist_insert_tail(&rxe->entry, &efa_rdm_ep_domain(pkt_entry->ep)->ope_longcts_send_list);
 	}
 }

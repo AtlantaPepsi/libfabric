@@ -36,6 +36,32 @@ int efa_base_ep_bind_av(struct efa_base_ep *base_ep, struct efa_av *av)
 	return 0;
 }
 
+static inline void efa_base_ep_lock_cq(struct efa_base_ep *base_ep)
+{
+	struct efa_cq *tx_cq, *rx_cq;
+
+	tx_cq = efa_base_ep_get_tx_cq(base_ep);
+	rx_cq = efa_base_ep_get_rx_cq(base_ep);
+
+	if (rx_cq)
+		ofi_genlock_lock(&rx_cq->util_cq.ep_list_lock);
+	if (tx_cq && tx_cq != rx_cq)
+		ofi_genlock_lock(&tx_cq->util_cq.ep_list_lock);
+}
+
+static inline void efa_base_ep_unlock_cq(struct efa_base_ep *base_ep)
+{
+	struct efa_cq *tx_cq, *rx_cq;
+
+	tx_cq = efa_base_ep_get_tx_cq(base_ep);
+	rx_cq = efa_base_ep_get_rx_cq(base_ep);
+
+	if (tx_cq && tx_cq != rx_cq)
+		ofi_genlock_unlock(&tx_cq->util_cq.ep_list_lock);
+	if (rx_cq)
+		ofi_genlock_unlock(&rx_cq->util_cq.ep_list_lock);
+}
+
 int efa_base_ep_destruct_qp(struct efa_base_ep *base_ep)
 {
 	struct efa_domain *domain;
@@ -44,14 +70,19 @@ int efa_base_ep_destruct_qp(struct efa_base_ep *base_ep)
 
 	if (qp) {
 		domain = qp->base_ep->domain;
+		/* Acquire the lock to prevent race conditions when CQ polling accesses the qp_table */
+		efa_base_ep_lock_cq(base_ep);
 		domain->qp_table[qp->qp_num & domain->qp_table_sz_m1] = NULL;
+		efa_base_ep_unlock_cq(base_ep);
 		efa_qp_destruct(qp);
 		base_ep->qp = NULL;
 	}
 
 	if (user_recv_qp) {
 		domain = user_recv_qp->base_ep->domain;
+		efa_base_ep_lock_cq(base_ep);
 		domain->qp_table[user_recv_qp->qp_num & domain->qp_table_sz_m1] = NULL;
+		efa_base_ep_unlock_cq(base_ep);
 		efa_qp_destruct(user_recv_qp);
 		base_ep->user_recv_qp = NULL;
 	}
@@ -82,7 +113,7 @@ int efa_base_ep_destruct(struct efa_base_ep *base_ep)
 	fi_freeinfo(base_ep->info);
 
 	if (base_ep->self_ah)
-		ibv_destroy_ah(base_ep->self_ah);
+		efa_ah_release(base_ep->domain, base_ep->self_ah);
 
 	err = efa_base_ep_destruct_qp(base_ep);
 
@@ -256,7 +287,12 @@ int efa_base_ep_enable_qp(struct efa_base_ep *base_ep, struct efa_qp *qp)
 		return err;
 
 	qp->qp_num = qp->ibv_qp->qp_num;
+
+	/* Acquire the lock to prevent race conditions when CQ polling accesses the qp_table */
+	efa_base_ep_lock_cq(base_ep);
 	base_ep->domain->qp_table[qp->qp_num & base_ep->domain->qp_table_sz_m1] = qp;
+	efa_base_ep_unlock_cq(base_ep);
+	
 	EFA_INFO(FI_LOG_EP_CTRL, "QP enabled! qp_n: %d qkey: %d\n", qp->qp_num, qp->qkey);
 
 	return err;
@@ -270,13 +306,9 @@ int efa_base_ep_enable_qp(struct efa_base_ep *base_ep, struct efa_qp *qp)
 static inline
 int efa_base_ep_create_self_ah(struct efa_base_ep *base_ep, struct ibv_pd *ibv_pd)
 {
-	struct ibv_ah_attr ah_attr;
 
-	memset(&ah_attr, 0, sizeof(ah_attr));
-	ah_attr.port_num = 1;
-	ah_attr.is_global = 1;
-	memcpy(ah_attr.grh.dgid.raw, base_ep->src_addr.raw, EFA_GID_LEN);
-	base_ep->self_ah = ibv_create_ah(ibv_pd, &ah_attr);
+	base_ep->self_ah = efa_ah_alloc(base_ep->domain, base_ep->src_addr.raw);
+
 	return base_ep->self_ah ? 0 : -FI_EINVAL;
 }
 

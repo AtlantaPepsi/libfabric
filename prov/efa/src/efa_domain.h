@@ -10,6 +10,7 @@
 #include "efa_env.h"
 #include "ofi_hmem.h"
 #include "ofi_util.h"
+#include "ofi_lock.h"
 
 enum efa_domain_info_type {
 	EFA_INFO_RDM,
@@ -33,6 +34,7 @@ struct efa_domain {
 	bool 			mr_local;
 	struct dlist_entry	list_entry; /* linked to g_efa_domain_list */
 	struct ofi_genlock	srx_lock; /* shared among peer providers */
+	struct efa_ah		*ah_map;
 	/* Total count of ibv memory registrations */
 	size_t ibv_mr_reg_ct;
 	/* Total size of memory registrations (in bytes) */
@@ -56,6 +58,7 @@ struct efa_domain {
 };
 
 extern struct dlist_entry g_efa_domain_list;
+extern ofi_mutex_t g_efa_domain_list_lock;
 
 /*
  * efa_is_cache_available() is a check to see whether a memory registration

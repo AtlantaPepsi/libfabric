@@ -159,7 +159,7 @@ typedef void (*ofi_alter_info_t)(uint32_t version,
 
 struct util_prov {
 	const struct fi_provider	*prov;
-	const struct fi_info		*info;
+	struct fi_info			*info;
 	ofi_alter_info_t		alter_defaults;
 	const int			flags;
 };
@@ -928,9 +928,12 @@ struct util_peer_addr {
 	int index;
 	int refcnt;
 	union ofi_sock_ip addr;
+	char str_addr[OFI_ADDRSTRLEN];
+	bool firewall_addr;
 };
 
-struct util_peer_addr *util_get_peer(struct rxm_av *av, const void *addr);
+struct util_peer_addr *util_get_peer(struct rxm_av *av, const void *addr,
+				     uint64_t flags);
 void util_put_peer(struct util_peer_addr *peer);
 
 /* All peer addresses, whether they've been inserted into the AV
@@ -1402,6 +1405,8 @@ ofi_progress_lock_type(enum fi_threading threading, enum fi_progress control)
 	return (threading == FI_THREAD_DOMAIN || threading == FI_THREAD_COMPLETION) &&
 		control == FI_PROGRESS_CONTROL_UNIFIED ? OFI_LOCK_NOOP : OFI_LOCK_MUTEX;
 }
+
+int ofi_thread_level(enum fi_threading thread_model);
 
 #ifdef __cplusplus
 }

@@ -491,12 +491,13 @@ void test_rdm_cq_create_error_handling(struct efa_resource **state)
 	struct verbs_context *vctx = NULL;
 	struct fi_cq_attr cq_attr = {0};
 
-	ibv_device_list = ibv_get_device_list(&g_device_cnt);
+	ibv_device_list = ibv_get_device_list(&g_efa_selected_device_cnt);
 	if (ibv_device_list == NULL) {
 		skip();
 		return;
 	}
-	efa_device_construct(&efa_device, 0, ibv_device_list[0]);
+	efa_device_construct_gid(&efa_device, ibv_device_list[0]);
+	efa_device_construct_data(&efa_device, ibv_device_list[0]);
 
 	resource->hints = efa_unit_test_alloc_hints(FI_EP_RDM, EFA_FABRIC_NAME);
 	assert_non_null(resource->hints);

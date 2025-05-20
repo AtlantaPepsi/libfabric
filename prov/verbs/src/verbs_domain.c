@@ -54,7 +54,7 @@ static bool vrb_flow_ctrl_available(struct fid_ep *ep_fid)
 	struct vrb_ep *ep = container_of(ep_fid, struct vrb_ep, util_ep.ep_fid);
 
 	// only enable if we are not using SRQ
-	return (!ep->srx && ep->ibv_qp && ep->ibv_qp->qp_type == IBV_QPT_RC);
+	return (!ep->srx && ep->util_ep.type == FI_EP_MSG);
 }
 
 static int vrb_enable_ep_flow_ctrl(struct fid_ep *ep_fid, uint64_t threshold)
@@ -308,6 +308,24 @@ static struct fi_ops_domain vrb_dgram_domain_ops = {
 	.query_collective = fi_no_query_collective,
 };
 
+static int
+vrb_check_verbs_info(struct fid_fabric *fabric, struct fi_info *info)
+{
+	const struct fi_info *fi;
+	int ret = -FI_ENODATA;
+
+	ofi_mutex_lock(&vrb_info_mutex);
+	for (fi = vrb_util_prov.info; fi; fi = fi->next) {
+		if (!strcmp(fi->domain_attr->name, info->domain_attr->name)) {
+			ret = ofi_check_domain_attr(&vrb_prov, fabric->api_version,
+						    fi->domain_attr, info);
+			break;
+		}
+	}
+	ofi_mutex_unlock(&vrb_info_mutex);
+
+	return ret;
+}
 
 static int
 vrb_domain(struct fid_fabric *fabric, struct fi_info *info,
@@ -325,13 +343,7 @@ vrb_domain(struct fid_fabric *fabric, struct fi_info *info,
 	struct vrb_fabric *fab =
 		 container_of(fabric, struct vrb_fabric,
 			      util_fabric.fabric_fid);
-	const struct fi_info *fi = vrb_get_verbs_info(vrb_util_prov.info,
-							 info->domain_attr->name);
-	if (!fi)
-		return -FI_EINVAL;
-
-	ret = ofi_check_domain_attr(&vrb_prov, fabric->api_version,
-				    fi->domain_attr, info);
+	ret = vrb_check_verbs_info(fabric, info);
 	if (ret)
 		return ret;
 
@@ -481,6 +493,7 @@ static int vrb_fabric_close(fid_t fid)
 	ret = ofi_fabric_close(&fab->util_fabric);
 	if (ret)
 		return ret;
+	fi_freeinfo(fab->info);
 	free(fab);
 
 	return 0;
@@ -507,13 +520,15 @@ int vrb_fabric(struct fi_fabric_attr *attr, struct fid_fabric **fabric,
 		  void *context)
 {
 	struct vrb_fabric *fab;
-	const struct fi_info *cur, *info = vrb_util_prov.info;
+	const struct fi_info *cur, *info;
 	int ret = FI_SUCCESS;
 
 	fab = calloc(1, sizeof(*fab));
 	if (!fab)
 		return -FI_ENOMEM;
 
+	ofi_mutex_lock(&vrb_info_mutex);
+	info = vrb_util_prov.info;
 	for (cur = info; cur; cur = info->next) {
 		ret = ofi_fabric_init(&vrb_prov, cur->fabric_attr, attr,
 				      &fab->util_fabric, context);
@@ -521,11 +536,13 @@ int vrb_fabric(struct fi_fabric_attr *attr, struct fid_fabric **fabric,
 			break;
 	}
 	if (ret) {
+		ofi_mutex_unlock(&vrb_info_mutex);
 		free(fab);
 		return ret;
 	}
 
-	fab->info = cur;
+	fab->info = fi_dupinfo(cur);
+	ofi_mutex_unlock(&vrb_info_mutex);
 
 	*fabric = &fab->util_fabric.fabric_fid;
 	(*fabric)->fid.fclass = FI_CLASS_FABRIC;

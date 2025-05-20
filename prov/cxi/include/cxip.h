@@ -362,6 +362,7 @@ static inline bool cxip_software_pte_allowed(void)
 struct cxip_addr {
 	uint32_t pid		: C_DFA_PID_BITS_MAX;
 	uint32_t nic		: C_DFA_NIC_BITS;
+	uint32_t pad		: 3;
 	uint16_t vni;
 };
 
@@ -820,6 +821,7 @@ struct cxip_md {
 	struct cxip_domain *dom;
 	struct cxi_md *md;
 	struct ofi_mr_info info;
+	uint64_t map_flags;
 	uint64_t handle;
 	int dmabuf_fd;
 	bool handle_valid;
@@ -1077,8 +1079,11 @@ struct cxip_eq {
 	ofi_mutex_t list_lock;
 };
 
-#define CXIP_EQ_MAP_FLAGS \
-	(CXI_MAP_WRITE | CXI_MAP_PIN)
+#ifdef CXI_MAP_IOVA_ALLOC
+#define CXIP_EQ_MAP_FLAGS (CXI_MAP_WRITE | CXI_MAP_PIN | CXI_MAP_IOVA_ALLOC)
+#else
+#define CXIP_EQ_MAP_FLAGS (CXI_MAP_WRITE | CXI_MAP_PIN)
+#endif
 
 /*
  * RMA request
@@ -2477,7 +2482,7 @@ struct cxip_ep_obj {
 };
 
 int cxip_ep_obj_map(struct cxip_ep_obj *ep, const void *buf, unsigned long len,
-		    uint64_t flags, struct cxip_md **md);
+		    uint64_t access, uint64_t flags, struct cxip_md **md);
 
 static inline void
 cxip_ep_obj_copy_to_md(struct cxip_ep_obj *ep, struct cxip_md *md, void *dest,
@@ -3008,6 +3013,7 @@ enum curl_ops {
 	CURL_DELETE,
 	CURL_MAX
 };
+extern bool cxip_collectives_supported;
 int cxip_curl_init(void);
 void cxip_curl_fini(void);
 const char *cxip_curl_opname(enum curl_ops op);
@@ -3030,6 +3036,8 @@ int cxip_json_int64(const char *desc, struct json_object *jobj, int64_t *val);
 int cxip_json_double(const char *desc, struct json_object *jobj, double *val);
 int cxip_json_string(const char *desc, struct json_object *jobj,
 		     const char **val);
+struct json_object *cxip_json_tokener_parse(const char *str);
+int cxip_json_object_put(struct json_object *obj);
 
 /* Perform zero-buffer collectives */
 void cxip_tree_rowcol(int radix, int nodeidx, int *row, int *col, int *siz);
@@ -3264,7 +3272,7 @@ int cxip_cntr_open(struct fid_domain *domain, struct fi_cntr_attr *attr,
 int cxip_iomm_init(struct cxip_domain *dom);
 void cxip_iomm_fini(struct cxip_domain *dom);
 int cxip_map(struct cxip_domain *dom, const void *buf, unsigned long len,
-	     uint64_t flags, struct cxip_md **md);
+	     uint64_t access, uint64_t flags, struct cxip_md **md);
 void cxip_unmap(struct cxip_md *md);
 
 int cxip_ctrl_msg_send(struct cxip_ctrl_req *req);
@@ -3713,8 +3721,8 @@ cxip_txc_copy_from_hmem(struct cxip_txc *txc, struct cxip_md *hmem_md,
 	 */
 	if (!cxip_env.fork_safe_requested) {
 		if (!hmem_md) {
-			ret = cxip_ep_obj_map(txc->ep_obj, hmem_src, size, 0,
-					      &hmem_md);
+			ret = cxip_ep_obj_map(txc->ep_obj, hmem_src, size,
+					      CXI_MAP_READ, 0, &hmem_md);
 			if (ret) {
 				TXC_WARN(txc, "cxip_ep_obj_map failed: %d:%s\n",
 					 ret, fi_strerror(-ret));

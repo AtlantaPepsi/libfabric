@@ -1271,7 +1271,8 @@ static int _coll_add_buffers(struct cxip_coll_pte *coll_pte, size_t size,
 			goto out;
 		}
 		ret = cxip_ep_obj_map(coll_pte->ep_obj, (void *)buf->buffer,
-				      size, 0, &buf->cxi_md);
+				      size, CXI_MAP_READ | CXI_MAP_WRITE, 0,
+				      &buf->cxi_md);
 		if (ret)
 			goto del_msg;
 		buf->bufsiz = size;
@@ -3185,7 +3186,7 @@ static void _cxip_delete_mcast_cb(struct cxip_curl_handle *handle)
 	const char *errmsg = "";
 
 	/* note: allocates space for strings, free at end */
-	json_obj = json_tokener_parse(handle->response);
+	json_obj = cxip_json_tokener_parse(handle->response);
 	if (json_obj) {
 		if (cxip_json_string("message", json_obj, &errmsg))
 			errmsg = "";
@@ -3231,7 +3232,7 @@ static void _cxip_delete_mcast_cb(struct cxip_curl_handle *handle)
 		break;
 	}
 	/* free json memory */
-	json_object_put(json_obj);
+	cxip_json_object_put(json_obj);
 	free(curl_usrptr);
 }
 
@@ -3386,7 +3387,7 @@ static void _cxip_create_mcast_cb(struct cxip_curl_handle *handle)
 	int i, ret;
 
 	/* note: allocates space for strings, free at end */
-	json_obj = json_tokener_parse(handle->response);
+	json_obj = cxip_json_tokener_parse(handle->response);
 	if (json_obj) {
 		if (cxip_json_string("message", json_obj, &message))
 			message = "";
@@ -3519,7 +3520,7 @@ static void _cxip_create_mcast_cb(struct cxip_curl_handle *handle)
 	}
 	TRACE_JOIN("jstate->prov_errno = %d\n", jstate->prov_errno);
 	/* free json memory */
-	json_object_put(json_obj);
+	cxip_json_object_put(json_obj);
 	free(curl_usrptr);
 }
 
@@ -4021,6 +4022,14 @@ int cxip_join_collective(struct fid_ep *ep, fi_addr_t coll_addr,
 	struct cxip_zbcoll_obj *zb;
 	bool link_zb;
 	int ret;
+	
+	if(cxip_collectives_supported) {
+		TRACE_JOIN("%s: CXI Collectives are supported\n", __func__);
+	}
+	else {
+		TRACE_JOIN("%s: CXI Collectives are not supported\n", __func__);
+		return -FI_EOPNOTSUPP;
+	}
 
 	check_red_pkt();
 

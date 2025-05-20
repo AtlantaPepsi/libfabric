@@ -39,9 +39,6 @@
 #include <ofi_util.h>
 #include "rxm.h"
 
-
-static void *rxm_cm_progress(void *arg);
-static void *rxm_cm_atomic_progress(void *arg);
 static void rxm_flush_msg_cq(struct rxm_ep *rxm_ep);
 
 
@@ -402,6 +399,8 @@ rxm_alloc_conn(struct rxm_ep *ep, struct util_peer_addr *peer)
 	conn->state = RXM_CM_IDLE;
 	conn->remote_index = -1;
 	conn->flags = 0;
+	conn->flow_ctrl = false;
+	conn->peer_flow_ctrl = false;
 	dlist_init(&conn->deferred_entry);
 	dlist_init(&conn->deferred_tx_queue);
 	dlist_init(&conn->deferred_sar_msgs);
@@ -460,6 +459,9 @@ ssize_t rxm_get_conn(struct rxm_ep *ep, fi_addr_t addr, struct rxm_conn **conn)
 		return 0;
 	}
 
+	if ((*peer)->firewall_addr)
+		return -FI_EFIREWALLADDR;
+
 	ret = rxm_connect(*conn);
 
 	/* If the progress function encounters an error trying to establish
@@ -484,11 +486,11 @@ static void rxm_set_peer_flow_ctrl(struct rxm_conn *conn, int cm_flow_ctrl_flag)
 		break;
 
 	case RXM_CM_FLOW_CTRL_PEER_ON:
-		conn->peer_flow_ctrl = 1;
+		conn->peer_flow_ctrl = true;
 		break;
 
 	case RXM_CM_FLOW_CTRL_PEER_OFF:
-		conn->peer_flow_ctrl = 0;
+		conn->peer_flow_ctrl = false;
 		break;
 	}
 }
@@ -511,7 +513,7 @@ void rxm_process_connect(struct rxm_eq_cm_entry *cm_entry)
 		rxm_set_peer_flow_ctrl(conn, cm_entry->data.accept.flow_ctrl);
 	}
 
-	if (conn->flow_ctrl & conn->peer_flow_ctrl) {
+	if (conn->flow_ctrl && conn->peer_flow_ctrl) {
 		domain = container_of(conn->ep->util_ep.domain,
 				      struct rxm_domain, util_domain);
 		domain->flow_ctrl_ops->enable(conn->msg_ep,
@@ -657,7 +659,7 @@ rxm_process_connreq(struct rxm_ep *ep, struct rxm_eq_cm_entry *cm_entry)
 	ofi_addr_set_port(&peer_addr.sa, cm_entry->data.connect.port);
 
 	av = container_of(ep->util_ep.av, struct rxm_av, util_av);
-	peer = util_get_peer(av, &peer_addr);
+	peer = util_get_peer(av, &peer_addr, 0);
 	if (!peer) {
 		RXM_WARN_ERR(FI_LOG_EP_CTRL, "util_get_peer", -FI_ENOMEM);
 		goto reject;
@@ -902,53 +904,7 @@ static void rxm_flush_msg_cq(struct rxm_ep *ep)
 	} while (ret > 0);
 }
 
-static void *rxm_cm_progress(void *arg)
-{
-	struct rxm_ep *ep = container_of(arg, struct rxm_ep, util_ep);
-	struct rxm_eq_cm_entry cm_entry;
-	uint32_t event;
-	ssize_t ret;
-
-	FI_INFO(&rxm_prov, FI_LOG_EP_CTRL, "Starting auto-progress thread\n");
-
-	ofi_genlock_lock(&ep->util_ep.lock);
-	while (ep->do_progress) {
-		ofi_genlock_unlock(&ep->util_ep.lock);
-
-		/* We must retrieve any event after we acquire the ep lock.
-		 * Otherwise, we could obtain an event for a msg ep that
-		 * another thread could be closing.  If we try to process that
-		 * event, we can access freed memory.  So, we use FI_PEEK here
-		 * to wait until an event is ready, then read any event after
-		 * we hold the ep lock.  Because closing an ep will free any
-		 * events queued on the eq, the event we find here may be gone
-		 * by the time we call read below.  This is what we want as it
-		 * avoids processing the stale event.
-		 */
-		ret = fi_eq_sread(ep->msg_eq, &event, &cm_entry,
-				  sizeof(cm_entry), -1, FI_PEEK);
-
-		ofi_genlock_lock(&ep->util_ep.lock);
-		if (ret > 0) {
-			ret = fi_eq_read(ep->msg_eq, &event, &cm_entry,
-					 sizeof(cm_entry), 0);
-		}
-		if (ret > 0) {
-			rxm_handle_event(ep, event, &cm_entry, ret);
-		} else if (ret == -FI_EAVAIL) {
-			rxm_handle_error(ep);
-		} else if (ret && ret != -FI_EAGAIN) {
-			RXM_WARN_ERR(FI_LOG_EP_CTRL, "fi_eq_read", ret);
-			break;
-		}
-	}
-	ofi_genlock_unlock(&ep->util_ep.lock);
-
-	FI_INFO(&rxm_prov, FI_LOG_EP_CTRL, "Stopping auto-progress thread\n");
-	return NULL;
-}
-
-static void *rxm_cm_atomic_progress(void *arg)
+static void *rxm_cm_data_progress(void *arg)
 {
 	struct rxm_ep *ep = container_of(arg, struct rxm_ep, util_ep);
 	struct rxm_fabric *fabric;
@@ -1035,12 +991,10 @@ int rxm_start_listen(struct rxm_ep *ep)
 
 	if (ep->util_ep.domain->data_progress == FI_PROGRESS_AUTO ||
 	    force_auto_progress) {
-
 		assert(ep->util_ep.domain->threading == FI_THREAD_SAFE);
 		ep->do_progress = true;
-		ret = pthread_create(&ep->cm_thread, 0,
-				     ep->rxm_info->caps & FI_ATOMIC ?
-				     rxm_cm_atomic_progress : rxm_cm_progress, ep);
+		ret = pthread_create(&ep->cm_thread, 0, rxm_cm_data_progress,
+				     ep);
 		if (ret) {
 			RXM_WARN_ERR(FI_LOG_EP_CTRL, "pthread_create", -ret);
 			return -ret;

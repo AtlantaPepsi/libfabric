@@ -2,6 +2,7 @@
 /* SPDX-FileCopyrightText: Copyright Amazon.com, Inc. or its affiliates. All rights reserved. */
 
 #include <ofi_prov.h>
+#include <ofi_lock.h>
 #include "efa.h"
 #include "efa_prov.h"
 #include "efa_prov_info.h"
@@ -74,6 +75,8 @@ struct util_prov efa_util_prov = {
 	.prov = &efa_prov,
 };
 
+ofi_mutex_t g_efa_domain_list_lock;
+
 /**
  * @brief initialize global variable: efa_util_prov
  *
@@ -93,8 +96,8 @@ static int efa_util_prov_initialize()
 	* Therefore, the efa-direct info objects should be returned _before_ efa rdm or dgram
 	* So we populate the efa-direct info objects first
 	*/
-	for (i = 0; i < g_device_cnt; ++i) {
-		prov_info_direct = fi_dupinfo(g_device_list[i].rdm_info);
+	for (i = 0; i < g_efa_selected_device_cnt; ++i) {
+		prov_info_direct = fi_dupinfo(g_efa_selected_device_list[i].rdm_info);
 		if (!prov_info_direct) {
 			EFA_WARN(FI_LOG_DOMAIN, "Failed to allocate prov_info for EFA direct\n");
 			continue;
@@ -116,8 +119,8 @@ static int efa_util_prov_initialize()
 		tail = prov_info_direct;
 	}
 
-	for (i = 0; i < g_device_cnt; ++i) {
-		err = efa_prov_info_alloc_for_rdm(&prov_info_rdm, &g_device_list[i]);
+	for (i = 0; i < g_efa_selected_device_cnt; ++i) {
+		err = efa_prov_info_alloc_for_rdm(&prov_info_rdm, &g_efa_selected_device_list[i]);
 		if (err) {
 			EFA_WARN(FI_LOG_DOMAIN, "Failed to allocate prov_info for rdm. error: %d\n",
 				 err);
@@ -140,8 +143,8 @@ static int efa_util_prov_initialize()
 		tail = prov_info_rdm;
 	}
 
-	for (i = 0; i < g_device_cnt; ++i) {
-		prov_info_dgram = fi_dupinfo(g_device_list[i].dgram_info);
+	for (i = 0; i < g_efa_selected_device_cnt; ++i) {
+		prov_info_dgram = fi_dupinfo(g_efa_selected_device_list[i].dgram_info);
 		if (!prov_info_dgram) {
 			EFA_WARN(FI_LOG_DOMAIN, "Failed to allocate prov_info for dgram\n");
 			continue;
@@ -193,15 +196,16 @@ EFA_INI
 	if (err)
 		goto err_free;
 
+	efa_env_initialize();
+
+	/*
+	 * efa_device_list_initialize uses FI_EFA_IFACE, so
+	 * efa_device_list_initialize must be called after efa_env_initialize
+	 */
 	err = efa_device_list_initialize();
 	if (err)
 		return &efa_prov;
 
-	/*
-	 * efa_env_initialize uses g_efa_device_list
-	 * so it must be called after efa_device_list_initialize()
-	 */
-	efa_env_initialize();
 
 	/*
 	 * efa_fork_support_enable_if_requested must be called before
@@ -232,6 +236,7 @@ EFA_INI
 	if (err)
 		goto err_free;
 
+	ofi_mutex_init(&g_efa_domain_list_lock);
 	dlist_init(&g_efa_domain_list);
 
 	return &efa_prov;

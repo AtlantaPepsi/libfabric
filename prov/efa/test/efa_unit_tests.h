@@ -86,8 +86,10 @@ struct efa_unit_test_handshake_pkt_attr {
 	uint32_t device_version;
 };
 
-int efa_device_construct(struct efa_device *efa_device,
-			 int device_idx,
+int efa_device_construct_gid(struct efa_device *efa_device,
+			 struct ibv_device *ibv_device);
+
+int efa_device_construct_data(struct efa_device *efa_device,
 			 struct ibv_device *ibv_device);
 
 void efa_unit_test_buff_construct(struct efa_unit_test_buff *buff, struct efa_resource *resource, size_t buff_size);
@@ -107,6 +109,8 @@ struct efa_rdm_ope *efa_unit_test_alloc_rxe(struct efa_resource *resource, uint3
 /* begin efa_unit_test_av.c */
 void test_av_insert_duplicate_raw_addr();
 void test_av_insert_duplicate_gid();
+void test_efa_ah_cnt_one_av();
+void test_efa_ah_cnt_multi_av();
 /* end efa_unit_test_av.c */
 
 void test_efa_device_construct_error_handling();
@@ -227,6 +231,8 @@ void test_efa_rdm_txe_handle_error_not_write_cq();
 void test_efa_rdm_rxe_handle_error_write_cq();
 void test_efa_rdm_rxe_handle_error_not_write_cq();
 void test_efa_rdm_rxe_map();
+void test_efa_rdm_rxe_list_removal();
+void test_efa_rdm_txe_list_removal();
 void test_efa_rdm_msg_send_to_local_peer_with_null_desc();
 void test_efa_fork_support_request_initialize_when_ibv_fork_support_is_needed();
 void test_efa_fork_support_request_initialize_when_ibv_fork_support_is_unneeded();
@@ -250,6 +256,9 @@ void test_efa_domain_info_type_efa_direct();
 void test_efa_domain_info_type_efa_rdm();
 void test_efa_domain_open_ops_wrong_name();
 void test_efa_domain_open_ops_mr_query();
+void test_efa_domain_rdm_attr_mr_allocated();
+void test_efa_domain_dgram_attr_mr_allocated();
+void test_efa_domain_direct_attr_mr_allocated();
 /* end efa_unit_test_domain.c */
 
 void test_efa_rdm_cq_ibv_cq_poll_list_same_tx_rx_cq_single_ep();

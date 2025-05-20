@@ -134,6 +134,14 @@ void efa_rdm_txe_release(struct efa_rdm_ope *txe)
 
 	dlist_remove(&txe->ep_entry);
 
+	/**
+	 * Make sure the entry is removed
+	 * from ope_longcts_list when the ope
+	 * is released for whatever reasons.
+	 */
+	if (txe->state == EFA_RDM_OPE_SEND)
+		dlist_remove(&txe->entry);
+
 	dlist_foreach_container_safe(&txe->queued_pkts,
 				     struct efa_rdm_pke,
 				     pkt_entry, entry, tmp) {
@@ -166,6 +174,14 @@ void efa_rdm_rxe_release_internal(struct efa_rdm_ope *rxe)
 		dlist_remove(&rxe->peer_entry);
 
 	dlist_remove(&rxe->ep_entry);
+
+	/**
+	 * Make sure the entry is removed
+	 * from ope_longcts_list when the ope
+	 * is released for whatever reasons.
+	 */
+	if (rxe->state == EFA_RDM_OPE_SEND)
+		dlist_remove(&rxe->entry);
 
 	if (rxe->rxe_map)
 		efa_rdm_rxe_map_remove(rxe->rxe_map, rxe->msg_id, rxe->addr, rxe);
@@ -696,7 +712,7 @@ void efa_rdm_txe_handle_error(struct efa_rdm_ope *txe, int err, int prov_errno)
 	switch (txe->state) {
 	case EFA_RDM_TXE_REQ:
 		break;
-	case EFA_RDM_TXE_SEND:
+	case EFA_RDM_OPE_SEND:
 		dlist_remove(&txe->entry);
 		break;
 	default:
@@ -785,9 +801,12 @@ void efa_rdm_rxe_report_completion(struct efa_rdm_ope *rxe)
 	cq_flags = (ep->base_ep.util_ep.rx_msg_flags == FI_COMPLETION) ? 0 : FI_SELECTIVE_COMPLETION;
 	if (OFI_UNLIKELY(rxe->cq_entry.len < rxe->total_len)) {
 		EFA_WARN(FI_LOG_CQ,
-			"Message truncated! tag: %"PRIu64" incoming message size: %"PRIu64" receiving buffer size: %zu\n",
-			rxe->cq_entry.tag,	rxe->total_len,
-			rxe->cq_entry.len);
+			 "Message truncated! from peer %" PRIu64
+			 " rx_id: %" PRIu32 " msg_id: %" PRIu32 " tag: %" PRIu64
+			 " incoming message size: %" PRIu64
+			 " receiving buffer size: %zu\n",
+			 rxe->addr, rxe->rx_id, rxe->msg_id, rxe->cq_entry.tag,
+			 rxe->total_len, rxe->cq_entry.len);
 
 		ret = ofi_cq_write_error_trunc(ep->base_ep.util_ep.rx_cq,
 					       rxe->cq_entry.op_context,
@@ -988,9 +1007,6 @@ void efa_rdm_ope_handle_send_completed(struct efa_rdm_ope *ope)
 {
 	struct efa_rdm_ep *ep;
 	struct efa_rdm_ope *rxe;
-
-	if (ope->state == EFA_RDM_TXE_SEND)
-		dlist_remove(&ope->entry);
 
 	ep = ope->ep;
 

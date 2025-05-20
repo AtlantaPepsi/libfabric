@@ -86,6 +86,7 @@ static int efa_fork_support_is_enabled()
 	return fork_status != IBV_FORK_DISABLED;
 #else
 	struct ibv_mr *mr = NULL;
+	struct ibv_pd *ibv_pd;
 	char *buf = NULL;
 	int ret=0, ret_init=0;
 	long page_size;
@@ -101,7 +102,14 @@ static int efa_fork_support_is_enabled()
 	if (!buf)
 		return -FI_ENOMEM;
 
-	mr = ibv_reg_mr(g_device_list[0].ibv_pd, buf, page_size, 0);
+	ibv_pd = ibv_alloc_pd(g_efa_selected_device_list[0].ibv_ctx);
+	if (!ibv_pd) {
+		EFA_WARN(FI_LOG_CORE, "Failed to allocate ibv pd: %d\n", errno);
+		free(buf);
+		return -FI_ENOMEM;
+	}
+
+	mr = ibv_reg_mr(ibv_pd, buf, page_size, 0);
 	if (mr == NULL) {
 		ret = errno;
 		goto out;
@@ -119,6 +127,7 @@ static int efa_fork_support_is_enabled()
 out:
 	if(buf) free(buf);
 	if(mr) ibv_dereg_mr(mr);
+	if(ibv_pd) ibv_dealloc_pd(ibv_pd);
 	if (ret) {
 		EFA_WARN(FI_LOG_CORE,
 			"Unexpected error during ibv_reg_mr in "
@@ -196,6 +205,7 @@ void efa_atfork_callback_flush_mr_cache()
 	struct efa_domain *efa_domain;
 	bool flush_lru = true;
 
+	ofi_mutex_lock(&g_efa_domain_list_lock);
 	dlist_foreach_container_safe(&g_efa_domain_list,
 				     struct efa_domain,
 				     efa_domain, list_entry, tmp) {
@@ -203,6 +213,7 @@ void efa_atfork_callback_flush_mr_cache()
 			while(ofi_mr_cache_flush(efa_domain->cache, flush_lru));
 		}
 	}
+	ofi_mutex_unlock(&g_efa_domain_list_lock);
 }
 
 #ifndef _WIN32
